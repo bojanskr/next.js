@@ -124,6 +124,7 @@ import {
 } from './web/spec-extension/adapters/next-request'
 import { matchNextDataPathname } from './lib/match-next-data-pathname'
 import getRouteFromAssetPath from '../shared/lib/router/utils/get-route-from-asset-path'
+import { AppPathsCollector } from './lib/app-paths-collector'
 
 export type FindComponentsResult = {
   components: LoadComponentsReturnType
@@ -290,7 +291,7 @@ export default abstract class Server<ServerOptions extends Options = Options> {
     strictNextHead: boolean
   }
   protected readonly serverOptions: Readonly<ServerOptions>
-  protected readonly appPathRoutes?: Record<string, string[]>
+  private readonly appPathRoutes?: Record<string, ReadonlyArray<string>>
   protected readonly clientReferenceManifest?: ClientReferenceManifest
   protected nextFontManifest?: NextFontManifest
   private readonly responseCache: ResponseCacheBase
@@ -494,14 +495,14 @@ export default abstract class Server<ServerOptions extends Options = Options> {
     // Start route compilation. We don't wait for the routes to finish loading
     // because we use the `waitTillReady` promise below in `handleRequest` to
     // wait. Also we can't `await` in the constructor.
-    void this.matchers.reload()
+    void this.matchers.load()
 
     this.setAssetPrefix(assetPrefix)
     this.responseCache = this.getResponseCache({ dev })
   }
 
   protected reloadMatchers() {
-    return this.matchers.reload()
+    return this.matchers.forceReload()
   }
 
   protected async handleNextDataRequest(
@@ -654,11 +655,7 @@ export default abstract class Server<ServerOptions extends Options = Options> {
 
     // Match api routes under `pages/api/`.
     matchers.push(
-      new PagesAPIRouteMatcherProvider(
-        this.distDir,
-        manifestLoader,
-        this.i18nProvider
-      )
+      new PagesAPIRouteMatcherProvider(this.distDir, manifestLoader)
     )
 
     // If the app directory is enabled, then add the app matchers and handlers.
@@ -899,6 +896,7 @@ export default abstract class Server<ServerOptions extends Options = Options> {
           let srcPathname = matchedPath
           const match = await this.matchers.match(matchedPath, {
             i18n: localeAnalysisResult,
+            matchedOutputPathname: undefined,
           })
 
           // Update the source pathname to the matched page's pathname.
@@ -1339,17 +1337,17 @@ export default abstract class Server<ServerOptions extends Options = Options> {
   // Backwards compatibility
   protected async close(): Promise<void> {}
 
-  protected getAppPathRoutes(): Record<string, string[]> {
-    const appPathRoutes: Record<string, string[]> = {}
+  private getAppPathRoutes(): Record<string, ReadonlyArray<string>> {
+    // If we don't have an appPathsManifest, we can't have any app paths.
+    if (!this.appPathsManifest) return {}
 
-    Object.keys(this.appPathsManifest || {}).forEach((entry) => {
-      const normalizedPath = normalizeAppPath(entry)
-      if (!appPathRoutes[normalizedPath]) {
-        appPathRoutes[normalizedPath] = []
-      }
-      appPathRoutes[normalizedPath].push(entry)
-    })
-    return appPathRoutes
+    const collector = new AppPathsCollector()
+
+    for (const page of Object.keys(this.appPathsManifest)) {
+      collector.push(normalizeAppPath(page), page)
+    }
+
+    return collector.toObject()
   }
 
   protected async run(
@@ -2477,17 +2475,15 @@ export default abstract class Server<ServerOptions extends Options = Options> {
   }
 
   // map the route to the actual bundle name
-  protected getOriginalAppPaths(route: string) {
-    if (this.hasAppDir) {
-      const originalAppPath = this.appPathRoutes?.[route]
+  protected getOriginalAppPaths(pathname: string) {
+    // If there is no app directory, it can't have app paths.
+    if (!this.hasAppDir || !this.appPathRoutes) return null
 
-      if (!originalAppPath) {
-        return null
-      }
+    const appPaths = this.appPathRoutes[pathname]
 
-      return originalAppPath
-    }
-    return null
+    if (!appPaths) return null
+
+    return appPaths
   }
 
   protected async renderPageComponent(
@@ -2561,6 +2557,7 @@ export default abstract class Server<ServerOptions extends Options = Options> {
 
     const options: MatchOptions = {
       i18n: this.i18nProvider?.fromQuery(pathname, query),
+      matchedOutputPathname: undefined,
     }
 
     try {

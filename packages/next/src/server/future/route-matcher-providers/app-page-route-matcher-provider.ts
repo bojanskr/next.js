@@ -1,7 +1,9 @@
 import { isAppPageRoute } from '../../../lib/is-app-page-route'
 
 import { APP_PATHS_MANIFEST } from '../../../shared/lib/constants'
+import { AppPathsCollector } from '../../lib/app-paths-collector'
 import { AppNormalizers } from '../normalizers/built/app'
+import { AppPageRouteDefinition } from '../route-definitions/app-page-route-definition'
 import { RouteKind } from '../route-kind'
 import { AppPageRouteMatcher } from '../route-matchers/app-page-route-matcher'
 import {
@@ -19,40 +21,45 @@ export class AppPageRouteMatcherProvider extends ManifestRouteMatcherProvider<Ap
     this.normalizers = new AppNormalizers(distDir)
   }
 
-  protected async transform(
-    manifest: Manifest
-  ): Promise<ReadonlyArray<AppPageRouteMatcher>> {
+  private prepare(manifest: Manifest) {
     // This matcher only matches app pages.
     const pages = Object.keys(manifest).filter((page) => isAppPageRoute(page))
 
     // Collect all the app paths for each page. This could include any parallel
     // routes.
-    const allAppPaths: Record<string, string[]> = {}
+    const routeAppPaths = new AppPathsCollector()
     for (const page of pages) {
       const pathname = this.normalizers.pathname.normalize(page)
-      if (pathname in allAppPaths) allAppPaths[pathname].push(page)
-      else allAppPaths[pathname] = [page]
+
+      // Collect all the app paths for this page. If this is the first time
+      // we've seen this page, then add it to the list of route pathnames.
+      routeAppPaths.push(pathname, page)
     }
 
-    // Format the routes.
-    const matchers: Array<AppPageRouteMatcher> = []
-    for (const [pathname, appPaths] of Object.entries(allAppPaths)) {
-      // TODO-APP: (wyattjoh) this is a hack right now, should be more deterministic
-      const page = appPaths[0]
-
+    const definitions: Array<AppPageRouteDefinition> = []
+    for (const { pathname, page, appPaths } of routeAppPaths.toSortedArray()) {
       const filename = this.normalizers.filename.normalize(manifest[page])
       const bundlePath = this.normalizers.bundlePath.normalize(page)
 
-      matchers.push(
-        new AppPageRouteMatcher({
-          kind: RouteKind.APP_PAGE,
-          pathname,
-          page,
-          bundlePath,
-          filename,
-          appPaths,
-        })
-      )
+      definitions.push({
+        kind: RouteKind.APP_PAGE,
+        pathname,
+        page,
+        bundlePath,
+        filename,
+        appPaths,
+      })
+    }
+
+    return definitions
+  }
+
+  protected async transform(
+    manifest: Manifest
+  ): Promise<ReadonlyArray<AppPageRouteMatcher>> {
+    const matchers: Array<AppPageRouteMatcher> = []
+    for (const definition of this.prepare(manifest)) {
+      matchers.push(new AppPageRouteMatcher(definition))
     }
 
     return matchers
