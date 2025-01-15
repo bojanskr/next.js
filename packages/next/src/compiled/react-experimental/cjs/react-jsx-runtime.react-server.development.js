@@ -11,28 +11,10 @@
 "use strict";
 "production" !== process.env.NODE_ENV &&
   (function () {
-    function error(format) {
-      for (
-        var _len2 = arguments.length,
-          args = Array(1 < _len2 ? _len2 - 1 : 0),
-          _key2 = 1;
-        _key2 < _len2;
-        _key2++
-      )
-        args[_key2 - 1] = arguments[_key2];
-      _len2 = format;
-      _key2 = Error("react-stack-top-frame");
-      !supportsCreateTask &&
-        ReactSharedInternalsServer.getCurrentStack &&
-        ((_key2 = ReactSharedInternalsServer.getCurrentStack(_key2)),
-        "" !== _key2 && ((_len2 += "%s"), (args = args.concat([_key2]))));
-      args.unshift(_len2);
-      Function.prototype.apply.call(console.error, console, args);
-    }
     function getComponentNameFromType(type) {
       if (null == type) return null;
       if ("function" === typeof type)
-        return type.$$typeof === REACT_CLIENT_REFERENCE$2
+        return type.$$typeof === REACT_CLIENT_REFERENCE
           ? null
           : type.displayName || type.name || null;
       if ("string" === typeof type) return type;
@@ -49,11 +31,13 @@
           return "Suspense";
         case REACT_SUSPENSE_LIST_TYPE:
           return "SuspenseList";
+        case REACT_VIEW_TRANSITION_TYPE:
+          return "ViewTransition";
       }
       if ("object" === typeof type)
         switch (
           ("number" === typeof type.tag &&
-            error(
+            console.error(
               "Received an unexpected object in getComponentNameFromType(). This is likely a bug in React. Please file an issue."
             ),
           type.$$typeof)
@@ -95,20 +79,22 @@
       } catch (e) {
         JSCompiler_inline_result = !0;
       }
-      if (JSCompiler_inline_result)
-        return (
-          (JSCompiler_inline_result =
-            ("function" === typeof Symbol &&
-              Symbol.toStringTag &&
-              value[Symbol.toStringTag]) ||
-            value.constructor.name ||
-            "Object"),
-          error(
-            "The provided key is an unsupported type %s. This value must be coerced to a string before using it here.",
-            JSCompiler_inline_result
-          ),
-          testStringCoercion(value)
+      if (JSCompiler_inline_result) {
+        JSCompiler_inline_result = console;
+        var JSCompiler_temp_const = JSCompiler_inline_result.error;
+        var JSCompiler_inline_result$jscomp$0 =
+          ("function" === typeof Symbol &&
+            Symbol.toStringTag &&
+            value[Symbol.toStringTag]) ||
+          value.constructor.name ||
+          "Object";
+        JSCompiler_temp_const.call(
+          JSCompiler_inline_result,
+          "The provided key is an unsupported type %s. This value must be coerced to a string before using it here.",
+          JSCompiler_inline_result$jscomp$0
         );
+        return testStringCoercion(value);
+      }
     }
     function getTaskName(type) {
       if (type === REACT_FRAGMENT_TYPE) return "<>";
@@ -129,13 +115,6 @@
       var dispatcher = ReactSharedInternalsServer.A;
       return null === dispatcher ? null : dispatcher.getOwner();
     }
-    function hasValidRef(config) {
-      if (hasOwnProperty.call(config, "ref")) {
-        var getter = Object.getOwnPropertyDescriptor(config, "ref").get;
-        if (getter && getter.isReactWarning) return !1;
-      }
-      return void 0 !== config.ref;
-    }
     function hasValidKey(config) {
       if (hasOwnProperty.call(config, "key")) {
         var getter = Object.getOwnPropertyDescriptor(config, "key").get;
@@ -147,7 +126,7 @@
       function warnAboutAccessingKey() {
         specialPropKeyWarningShown ||
           ((specialPropKeyWarningShown = !0),
-          error(
+          console.error(
             "%s: `key` is not a prop. Trying to access it will result in `undefined` being returned. If you need to access the same value within the child component, you should pass it as a different prop. (https://react.dev/link/special-props)",
             displayName
           ));
@@ -162,7 +141,7 @@
       var componentName = getComponentNameFromType(this.type);
       didWarnAboutElementRef[componentName] ||
         ((didWarnAboutElementRef[componentName] = !0),
-        error(
+        console.error(
           "Accessing element.ref was removed in React 19. ref is now a regular prop. It will be removed from the JSX Element type in a future release."
         ));
       componentName = this.props.ref;
@@ -171,7 +150,6 @@
     function ReactElement(
       type,
       key,
-      _ref,
       self,
       source,
       owner,
@@ -179,7 +157,7 @@
       debugStack,
       debugTask
     ) {
-      _ref = props.ref;
+      self = props.ref;
       type = {
         $$typeof: REACT_ELEMENT_TYPE,
         type: type,
@@ -187,7 +165,7 @@
         props: props,
         _owner: owner
       };
-      null !== (void 0 !== _ref ? _ref : null)
+      null !== (void 0 !== self ? self : null)
         ? Object.defineProperty(type, "ref", {
             enumerable: !1,
             get: elementRefGetterWithDeprecationWarning
@@ -231,67 +209,22 @@
       debugStack,
       debugTask
     ) {
-      if (
-        "string" === typeof type ||
-        "function" === typeof type ||
-        type === REACT_FRAGMENT_TYPE ||
-        type === REACT_PROFILER_TYPE ||
-        type === REACT_STRICT_MODE_TYPE ||
-        type === REACT_SUSPENSE_TYPE ||
-        type === REACT_SUSPENSE_LIST_TYPE ||
-        type === REACT_OFFSCREEN_TYPE ||
-        ("object" === typeof type &&
-          null !== type &&
-          (type.$$typeof === REACT_LAZY_TYPE ||
-            type.$$typeof === REACT_MEMO_TYPE ||
-            type.$$typeof === REACT_CONTEXT_TYPE ||
-            type.$$typeof === REACT_CONSUMER_TYPE ||
-            type.$$typeof === REACT_FORWARD_REF_TYPE ||
-            type.$$typeof === REACT_CLIENT_REFERENCE$1 ||
-            void 0 !== type.getModuleId))
-      ) {
-        var children = config.children;
-        if (void 0 !== children)
-          if (isStaticChildren)
-            if (isArrayImpl(children)) {
-              for (
-                isStaticChildren = 0;
-                isStaticChildren < children.length;
-                isStaticChildren++
-              )
-                validateChildKeys(children[isStaticChildren]);
-              Object.freeze && Object.freeze(children);
-            } else
-              error(
-                "React.jsx: Static children should always be an array. You are likely explicitly calling React.jsxs or React.jsxDEV. Use the Babel transform instead."
-              );
-          else validateChildKeys(children);
-      } else {
-        children = "";
-        if (
-          void 0 === type ||
-          ("object" === typeof type &&
-            null !== type &&
-            0 === Object.keys(type).length)
-        )
-          children +=
-            " You likely forgot to export your component from the file it's defined in, or you might have mixed up default and named imports.";
-        null === type
-          ? (isStaticChildren = "null")
-          : isArrayImpl(type)
-          ? (isStaticChildren = "array")
-          : void 0 !== type && type.$$typeof === REACT_ELEMENT_TYPE
-          ? ((isStaticChildren =
-              "<" + (getComponentNameFromType(type.type) || "Unknown") + " />"),
-            (children =
-              " Did you accidentally export a JSX literal instead of a component?"))
-          : (isStaticChildren = typeof type);
-        error(
-          "React.jsx: type is invalid -- expected a string (for built-in components) or a class/function (for composite components) but got: %s.%s",
-          isStaticChildren,
-          children
-        );
-      }
+      var children = config.children;
+      if (void 0 !== children)
+        if (isStaticChildren)
+          if (isArrayImpl(children)) {
+            for (
+              isStaticChildren = 0;
+              isStaticChildren < children.length;
+              isStaticChildren++
+            )
+              validateChildKeys(children[isStaticChildren]);
+            Object.freeze && Object.freeze(children);
+          } else
+            console.error(
+              "React.jsx: Static children should always be an array. You are likely explicitly calling React.jsxs or React.jsxDEV. Use the Babel transform instead."
+            );
+        else validateChildKeys(children);
       if (hasOwnProperty.call(config, "key")) {
         children = getComponentNameFromType(type);
         var keys = Object.keys(config).filter(function (k) {
@@ -304,7 +237,7 @@
         didWarnAboutKeySpread[children + isStaticChildren] ||
           ((keys =
             0 < keys.length ? "{" + keys.join(": ..., ") + ": ...}" : "{}"),
-          error(
+          console.error(
             'A props object containing a "key" prop is being spread into JSX:\n  let props = %s;\n  <%s {...props} />\nReact keys must be passed directly to JSX without using spread:\n  let props = %s;\n  <%s key={someKey} {...props} />',
             isStaticChildren,
             children,
@@ -318,22 +251,21 @@
         (checkKeyStringCoercion(maybeKey), (children = "" + maybeKey));
       hasValidKey(config) &&
         (checkKeyStringCoercion(config.key), (children = "" + config.key));
-      hasValidRef(config);
       if ("key" in config) {
         maybeKey = {};
         for (var propName in config)
           "key" !== propName && (maybeKey[propName] = config[propName]);
       } else maybeKey = config;
       children &&
-        ((config =
+        defineKeyPropWarningGetter(
+          maybeKey,
           "function" === typeof type
             ? type.displayName || type.name || "Unknown"
-            : type),
-        children && defineKeyPropWarningGetter(maybeKey, config));
+            : type
+        );
       return ReactElement(
         type,
         children,
-        null,
         self,
         source,
         getOwner(),
@@ -343,33 +275,11 @@
       );
     }
     function validateChildKeys(node) {
-      if (
-        "object" === typeof node &&
-        node &&
-        node.$$typeof !== REACT_CLIENT_REFERENCE &&
-        !isArrayImpl(node)
-      )
-        if (
-          "object" === typeof node &&
-          null !== node &&
-          node.$$typeof === REACT_ELEMENT_TYPE
-        )
-          node._store && (node._store.validated = 1);
-        else {
-          if (null === node || "object" !== typeof node) var iteratorFn = null;
-          else
-            (iteratorFn =
-              (MAYBE_ITERATOR_SYMBOL && node[MAYBE_ITERATOR_SYMBOL]) ||
-              node["@@iterator"]),
-              (iteratorFn =
-                "function" === typeof iteratorFn ? iteratorFn : null);
-          if (
-            "function" === typeof iteratorFn &&
-            iteratorFn !== node.entries &&
-            ((iteratorFn = iteratorFn.call(node)), iteratorFn !== node)
-          )
-            for (; !iteratorFn.next().done; );
-        }
+      "object" === typeof node &&
+        null !== node &&
+        node.$$typeof === REACT_ELEMENT_TYPE &&
+        node._store &&
+        (node._store.validated = 1);
     }
     var React = require("next/dist/compiled/react-experimental"),
       REACT_ELEMENT_TYPE = Symbol.for("react.transitional.element"),
@@ -385,22 +295,18 @@
       REACT_SUSPENSE_LIST_TYPE = Symbol.for("react.suspense_list"),
       REACT_MEMO_TYPE = Symbol.for("react.memo"),
       REACT_LAZY_TYPE = Symbol.for("react.lazy"),
-      REACT_OFFSCREEN_TYPE = Symbol.for("react.offscreen"),
-      MAYBE_ITERATOR_SYMBOL = Symbol.iterator,
+      REACT_VIEW_TRANSITION_TYPE = Symbol.for("react.view_transition"),
+      REACT_CLIENT_REFERENCE = Symbol.for("react.client.reference"),
       ReactSharedInternalsServer =
         React.__SERVER_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
     if (!ReactSharedInternalsServer)
       throw Error(
         'The "react" package in this environment is not configured correctly. The "react-server" condition must be enabled in any environment that runs React Server Components.'
       );
-    var supportsCreateTask = !!console.createTask,
-      REACT_CLIENT_REFERENCE$2 = Symbol.for("react.client.reference"),
-      hasOwnProperty = Object.prototype.hasOwnProperty,
-      REACT_CLIENT_REFERENCE$1 = Symbol.for("react.client.reference"),
+    var hasOwnProperty = Object.prototype.hasOwnProperty,
       isArrayImpl = Array.isArray;
     new ("function" === typeof WeakMap ? WeakMap : Map)();
-    var REACT_CLIENT_REFERENCE = Symbol.for("react.client.reference"),
-      createTask = console.createTask
+    var createTask = console.createTask
         ? console.createTask
         : function () {
             return null;

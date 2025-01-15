@@ -6,6 +6,7 @@
       "inputs": [
         "../../.cargo/**",
         "../../crates/**",
+        "../../turbopack/crates/**",
         "../../Cargo.toml",
         "../../Cargo.lock",
         "../../.github/workflows/build_and_deploy.yml",
@@ -17,6 +18,7 @@
       "inputs": [
         "../../.cargo/**",
         "../../crates/**",
+        "../../turbopack/crates/**",
         "../../**/Cargo.toml",
         "../../**/Cargo.lock",
         "../../.github/workflows/build_and_deploy.yml",
@@ -28,6 +30,7 @@
       "inputs": [
         "../../.cargo/**",
         "../../crates/**",
+        "../../turbopack/crates/**",
         "../../**/Cargo.toml",
         "../../**/Cargo.lock",
         "../../.github/workflows/build_and_deploy.yml",
@@ -39,6 +42,7 @@
       "inputs": [
         "../../.cargo/**",
         "../../crates/**",
+        "../../turbopack/crates/**",
         "../../**/Cargo.toml",
         "../../**/Cargo.lock",
         "../../.github/workflows/build_and_deploy.yml",
@@ -50,6 +54,7 @@
       "inputs": [
         "../../.cargo/**",
         "../../crates/**",
+        "../../turbopack/crates/**",
         "../../**/Cargo.toml",
         "../../**/Cargo.lock",
         "../../.github/workflows/build_and_deploy.yml",
@@ -61,6 +66,7 @@
       "inputs": [
         "../../.cargo/**",
         "../../crates/**",
+        "../../turbopack/crates/**",
         "../../**/Cargo.toml",
         "../../**/Cargo.lock",
         "../../.github/workflows/build_and_deploy.yml",
@@ -72,6 +78,7 @@
       "inputs": [
         "../../.cargo/**",
         "../../crates/**",
+        "../../turbopack/crates/**",
         "../../**/Cargo.toml",
         "../../**/Cargo.lock",
         "../../.github/workflows/build_and_deploy.yml",
@@ -80,16 +87,13 @@
       "outputs": ["native/*.node"]
     },
     "rust-check": {
-      "dependsOn": [
-        "rust-check-fmt",
-        "rust-check-clippy",
-        "rust-check-napi-rustls"
-      ]
+      "dependsOn": ["rust-check-fmt", "rust-check-clippy", "rust-check-napi"]
     },
     "rust-check-fmt": {
       "inputs": [
         "../../.cargo/**",
         "../../crates/**",
+        "../../turbopack/crates/**",
         "../../**/Cargo.toml",
         "../../**/Cargo.lock",
         "../../.github/workflows/build_and_deploy.yml",
@@ -101,16 +105,18 @@
       "inputs": [
         "../../.cargo/**",
         "../../crates/**",
+        "../../turbopack/crates/**",
         "../../**/Cargo.toml",
         "../../**/Cargo.lock",
         "../../.github/workflows/build_and_deploy.yml",
         "../../rust-toolchain"
       ]
     },
-    "rust-check-napi-rustls": {
+    "rust-check-napi": {
       "inputs": [
         "../../.cargo/**",
         "../../crates/**",
+        "../../turbopack/crates/**",
         "../../**/Cargo.toml",
         "../../**/Cargo.lock",
         "../../.github/workflows/build_and_deploy.yml",
@@ -121,6 +127,7 @@
       "inputs": [
         "../../.cargo/**",
         "../../crates/**",
+        "../../turbopack/crates/**",
         "../../**/Cargo.toml",
         "../../**/Cargo.lock",
         "../../.github/workflows/build_and_deploy.yml",

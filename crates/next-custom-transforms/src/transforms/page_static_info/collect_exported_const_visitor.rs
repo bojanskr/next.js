@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use serde_json::{Map, Number, Value};
-use turbopack_binding::swc::core::{
+use swc_core::{
     common::{Mark, SyntaxContext},
     ecma::{
         ast::{
@@ -36,6 +36,7 @@ impl CollectExportedConstVisitor {
             expr_ctx: ExprCtx {
                 unresolved_ctxt: SyntaxContext::empty().apply_mark(Mark::new()),
                 is_unresolved_ref_safe: false,
+                in_strict: false,
             },
         }
     }

@@ -2,40 +2,44 @@ use std::{io::Write, iter::once};
 
 use anyhow::{bail, Context, Result};
 use indoc::writedoc;
-use turbo_tasks::{RcStr, Value, ValueToString, Vc};
+use turbo_rcstr::RcStr;
+use turbo_tasks::{ResolvedVc, Value, ValueToString, Vc};
 use turbo_tasks_fs::File;
-use turbopack_binding::turbopack::{
-    core::{
-        asset::{Asset, AssetContent},
-        chunk::{AsyncModuleInfo, ChunkItem, ChunkType, ChunkableModule, ChunkingContext},
-        code_builder::CodeBuilder,
-        context::AssetContext,
-        ident::AssetIdent,
-        module::Module,
-        reference::{ModuleReferences, SingleModuleReference},
-        reference_type::ReferenceType,
-        virtual_source::VirtualSource,
+use turbopack_core::{
+    asset::{Asset, AssetContent},
+    chunk::{
+        AsyncModuleInfo, ChunkGroupType, ChunkItem, ChunkType, ChunkableModule, ChunkingContext,
     },
-    ecmascript::{
-        chunk::{
-            EcmascriptChunkItem, EcmascriptChunkItemContent, EcmascriptChunkPlaceable,
-            EcmascriptChunkType, EcmascriptExports,
-        },
-        utils::StringifyJs,
-        EcmascriptModuleAsset,
+    code_builder::CodeBuilder,
+    context::AssetContext,
+    ident::AssetIdent,
+    module::Module,
+    module_graph::ModuleGraph,
+    reference::ModuleReferences,
+    reference_type::ReferenceType,
+    virtual_source::VirtualSource,
+};
+use turbopack_ecmascript::{
+    chunk::{
+        EcmascriptChunkItem, EcmascriptChunkItemContent, EcmascriptChunkPlaceable,
+        EcmascriptChunkType, EcmascriptExports,
     },
+    utils::StringifyJs,
 };
 
-use super::ecmascript_client_reference_module::EcmascriptClientReferenceModule;
+use crate::next_client_reference::{
+    ecmascript_client_reference::ecmascript_client_reference_module::EcmascriptClientReference,
+    EcmascriptClientReferenceModule,
+};
 
 /// A [`EcmascriptClientReferenceProxyModule`] is used in RSC to represent
 /// a client or SSR asset.
 #[turbo_tasks::value]
 pub struct EcmascriptClientReferenceProxyModule {
-    server_module_ident: Vc<AssetIdent>,
-    server_asset_context: Vc<Box<dyn AssetContext>>,
-    client_module: Vc<Box<dyn EcmascriptChunkPlaceable>>,
-    ssr_module: Vc<Box<dyn EcmascriptChunkPlaceable>>,
+    server_module_ident: ResolvedVc<AssetIdent>,
+    server_asset_context: ResolvedVc<Box<dyn AssetContext>>,
+    client_module: ResolvedVc<Box<dyn EcmascriptChunkPlaceable>>,
+    ssr_module: ResolvedVc<Box<dyn EcmascriptChunkPlaceable>>,
 }
 
 #[turbo_tasks::value_impl]
@@ -50,10 +54,10 @@ impl EcmascriptClientReferenceProxyModule {
     /// * `ssr_module` - The SSR module.
     #[turbo_tasks::function]
     pub fn new(
-        server_module_ident: Vc<AssetIdent>,
-        server_asset_context: Vc<Box<dyn AssetContext>>,
-        client_module: Vc<Box<dyn EcmascriptChunkPlaceable>>,
-        ssr_module: Vc<Box<dyn EcmascriptChunkPlaceable>>,
+        server_module_ident: ResolvedVc<AssetIdent>,
+        server_asset_context: ResolvedVc<Box<dyn AssetContext>>,
+        client_module: ResolvedVc<Box<dyn EcmascriptChunkPlaceable>>,
+        ssr_module: ResolvedVc<Box<dyn EcmascriptChunkPlaceable>>,
     ) -> Vc<EcmascriptClientReferenceProxyModule> {
         EcmascriptClientReferenceProxyModule {
             server_module_ident,
@@ -65,13 +69,15 @@ impl EcmascriptClientReferenceProxyModule {
     }
 
     #[turbo_tasks::function]
-    async fn proxy_module(&self) -> Result<Vc<EcmascriptModuleAsset>> {
+    async fn proxy_module(&self) -> Result<Vc<Box<dyn EcmascriptChunkPlaceable>>> {
         let mut code = CodeBuilder::default();
+        let is_esm: bool;
 
-        let server_module_path = &*self.server_module_ident.path().to_string().await?;
+        let server_module_path = &*self.server_module_ident.to_string().await?;
 
         // Adapted from https://github.com/facebook/react/blob/c5b9375767e2c4102d7e5559d383523736f1c902/packages/react-server-dom-webpack/src/ReactFlightWebpackNodeLoader.js#L323-L354
         if let EcmascriptExports::EsmExports(exports) = &*self.client_module.get_exports().await? {
+            is_esm = true;
             let exports = exports.expand_exports().await?;
 
             if !exports.dynamic_exports.is_empty() {
@@ -127,6 +133,7 @@ impl EcmascriptClientReferenceProxyModule {
                 }
             }
         } else {
+            is_esm = false;
             writedoc!(
                 code,
                 r#"
@@ -143,7 +150,13 @@ impl EcmascriptClientReferenceProxyModule {
             AssetContent::file(File::from(code.source_code().clone()).into());
 
         let proxy_source = VirtualSource::new(
-            self.server_module_ident.path().join("proxy.js".into()),
+            self.server_module_ident.path().join(
+                // Depending on the original format, we call the file `proxy.mjs` or `proxy.cjs`.
+                // This is because we're placing the virtual module next to the original code, so
+                // its parsing will be affected by `type` fields in package.json --
+                // a bare `proxy.js` may end up being unexpectedly parsed as the wrong format.
+                format!("proxy.{}", if is_esm { "mjs" } else { "cjs" }).into(),
+            ),
             proxy_module_content,
         );
 
@@ -156,7 +169,7 @@ impl EcmascriptClientReferenceProxyModule {
             .module();
 
         let Some(proxy_module) =
-            Vc::try_resolve_downcast_type::<EcmascriptModuleAsset>(proxy_module).await?
+            Vc::try_resolve_sidecast::<Box<dyn EcmascriptChunkPlaceable>>(proxy_module).await?
         else {
             bail!("proxy asset is not an ecmascript module");
         };
@@ -188,14 +201,23 @@ impl Module for EcmascriptClientReferenceProxyModule {
             .await?
             .iter()
             .copied()
-            .chain(once(Vc::upcast(SingleModuleReference::new(
-                Vc::upcast(EcmascriptClientReferenceModule::new(
-                    *server_module_ident,
-                    *client_module,
-                    *ssr_module,
-                )),
-                client_reference_description(),
-            ))))
+            // TODO this will break once ChunkingType::Isolated is properly implemented.
+            //
+            // We should instead merge EcmascriptClientReferenceProxyModule and
+            // EcmascriptClientReferenceModule into a single module
+            .chain(once(ResolvedVc::upcast(
+                EcmascriptClientReference::new(
+                    Vc::upcast(EcmascriptClientReferenceModule::new(
+                        **server_module_ident,
+                        **client_module,
+                        **ssr_module,
+                    )),
+                    ChunkGroupType::Entry,
+                    client_reference_description(),
+                )
+                .to_resolved()
+                .await?,
+            )))
             .collect();
 
         Ok(Vc::cell(references))
@@ -214,13 +236,18 @@ impl Asset for EcmascriptClientReferenceProxyModule {
 impl ChunkableModule for EcmascriptClientReferenceProxyModule {
     #[turbo_tasks::function]
     async fn as_chunk_item(
-        self: Vc<Self>,
-        chunking_context: Vc<Box<dyn ChunkingContext>>,
+        self: ResolvedVc<Self>,
+        module_graph: Vc<ModuleGraph>,
+        chunking_context: ResolvedVc<Box<dyn ChunkingContext>>,
     ) -> Result<Vc<Box<dyn ChunkItem>>> {
-        let item = self.proxy_module().as_chunk_item(chunking_context);
+        let item = self
+            .proxy_module()
+            .as_chunk_item(module_graph, *chunking_context);
         let ecmascript_item = Vc::try_resolve_downcast::<Box<dyn EcmascriptChunkItem>>(item)
             .await?
-            .context("EcmascriptModuleAsset must implement EcmascriptChunkItem")?;
+            .context("EcmascriptModuleAsset must implement EcmascriptChunkItem")?
+            .to_resolved()
+            .await?;
 
         Ok(Vc::upcast(
             ProxyModuleChunkItem {
@@ -247,9 +274,9 @@ impl EcmascriptChunkPlaceable for EcmascriptClientReferenceProxyModule {
 /// [`Vc<EcmascriptClientReferenceProxyModule>`].
 #[turbo_tasks::value]
 struct ProxyModuleChunkItem {
-    client_proxy_asset: Vc<EcmascriptClientReferenceProxyModule>,
-    inner_proxy_module_chunk_item: Vc<Box<dyn EcmascriptChunkItem>>,
-    chunking_context: Vc<Box<dyn ChunkingContext>>,
+    client_proxy_asset: ResolvedVc<EcmascriptClientReferenceProxyModule>,
+    inner_proxy_module_chunk_item: ResolvedVc<Box<dyn EcmascriptChunkItem>>,
+    chunking_context: ResolvedVc<Box<dyn ChunkingContext>>,
 }
 
 #[turbo_tasks::function]
@@ -265,18 +292,13 @@ fn client_reference_description() -> Vc<RcStr> {
 #[turbo_tasks::value_impl]
 impl ChunkItem for ProxyModuleChunkItem {
     #[turbo_tasks::function]
-    async fn asset_ident(&self) -> Vc<AssetIdent> {
+    fn asset_ident(&self) -> Vc<AssetIdent> {
         self.client_proxy_asset.ident()
     }
 
     #[turbo_tasks::function]
-    fn references(&self) -> Vc<ModuleReferences> {
-        self.client_proxy_asset.references()
-    }
-
-    #[turbo_tasks::function]
-    async fn chunking_context(&self) -> Vc<Box<dyn ChunkingContext>> {
-        Vc::upcast(self.chunking_context)
+    fn chunking_context(&self) -> Vc<Box<dyn ChunkingContext>> {
+        Vc::upcast(*self.chunking_context)
     }
 
     #[turbo_tasks::function]
@@ -286,7 +308,7 @@ impl ChunkItem for ProxyModuleChunkItem {
 
     #[turbo_tasks::function]
     fn module(&self) -> Vc<Box<dyn Module>> {
-        Vc::upcast(self.client_proxy_asset)
+        Vc::upcast(*self.client_proxy_asset)
     }
 }
 
@@ -308,6 +330,6 @@ impl EcmascriptChunkItem for ProxyModuleChunkItem {
 
     #[turbo_tasks::function]
     fn chunking_context(&self) -> Vc<Box<dyn ChunkingContext>> {
-        EcmascriptChunkItem::chunking_context(self.inner_proxy_module_chunk_item)
+        EcmascriptChunkItem::chunking_context(*self.inner_proxy_module_chunk_item)
     }
 }

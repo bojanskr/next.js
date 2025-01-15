@@ -4,12 +4,19 @@ use anyhow::Result;
 use napi::{bindgen_prelude::External, JsFunction};
 use next_api::{
     paths::ServerPath,
-    route::{Endpoint, WrittenEndpoint},
+    route::{
+        endpoint_server_changed_operation, endpoint_write_to_disk_operation, Endpoint,
+        WrittenEndpoint,
+    },
 };
 use tracing::Instrument;
-use turbo_tasks::{Completion, ReadRef, Vc};
-use turbopack_binding::turbopack::core::{
-    diagnostics::PlainDiagnostic, error::PrettyPrintError, issue::PlainIssue,
+use turbo_tasks::{
+    get_effects, Completion, Effects, OperationVc, ReadRef, ResolvedVc, Vc, VcValueType,
+};
+use turbopack_core::{
+    diagnostics::PlainDiagnostic,
+    error::PrettyPrintError,
+    issue::{IssueSeverity, PlainIssue},
 };
 
 use super::utils::{
@@ -47,27 +54,31 @@ pub struct NapiWrittenEndpoint {
     pub config: NapiEndpointConfig,
 }
 
-impl From<WrittenEndpoint> for NapiWrittenEndpoint {
-    fn from(written_endpoint: WrittenEndpoint) -> Self {
+impl From<Option<WrittenEndpoint>> for NapiWrittenEndpoint {
+    fn from(written_endpoint: Option<WrittenEndpoint>) -> Self {
         match written_endpoint {
-            WrittenEndpoint::NodeJs {
+            Some(WrittenEndpoint::NodeJs {
                 server_entry_path,
                 server_paths,
                 client_paths,
-            } => Self {
+            }) => Self {
                 r#type: "nodejs".to_string(),
                 entry_path: Some(server_entry_path),
                 client_paths: client_paths.into_iter().map(From::from).collect(),
                 server_paths: server_paths.into_iter().map(From::from).collect(),
                 ..Default::default()
             },
-            WrittenEndpoint::Edge {
+            Some(WrittenEndpoint::Edge {
                 server_paths,
                 client_paths,
-            } => Self {
+            }) => Self {
                 r#type: "edge".to_string(),
                 client_paths: client_paths.into_iter().map(From::from).collect(),
                 server_paths: server_paths.into_iter().map(From::from).collect(),
+                ..Default::default()
+            },
+            None => Self {
+                r#type: "none".to_string(),
                 ..Default::default()
             },
         }
@@ -90,25 +101,50 @@ impl Deref for ExternalEndpoint {
     }
 }
 
+// Await the source and return fatal issues if there are any, otherwise
+// propagate any actual error results.
+async fn strongly_consistent_catch_collectables<R: VcValueType + Send>(
+    source: OperationVc<R>,
+) -> Result<(
+    Option<ReadRef<R>>,
+    Arc<Vec<ReadRef<PlainIssue>>>,
+    Arc<Vec<ReadRef<PlainDiagnostic>>>,
+    Arc<Effects>,
+)> {
+    let result = source.connect().strongly_consistent().await;
+    let issues = get_issues(source).await?;
+    let diagnostics = get_diagnostics(source).await?;
+    let effects = Arc::new(get_effects(source).await?);
+
+    let result = if result.is_err() && issues.iter().any(|i| i.severity <= IssueSeverity::Error) {
+        None
+    } else {
+        Some(result?)
+    };
+
+    Ok((result, issues, diagnostics, effects))
+}
+
 #[turbo_tasks::value(serialization = "none")]
 struct WrittenEndpointWithIssues {
-    written: ReadRef<WrittenEndpoint>,
+    written: Option<ReadRef<WrittenEndpoint>>,
     issues: Arc<Vec<ReadRef<PlainIssue>>>,
     diagnostics: Arc<Vec<ReadRef<PlainDiagnostic>>>,
+    effects: Arc<Effects>,
 }
 
 #[turbo_tasks::function]
 async fn get_written_endpoint_with_issues(
-    endpoint: Vc<Box<dyn Endpoint>>,
+    endpoint: ResolvedVc<Box<dyn Endpoint>>,
 ) -> Result<Vc<WrittenEndpointWithIssues>> {
-    let write_to_disk = endpoint.write_to_disk();
-    let written = write_to_disk.strongly_consistent().await?;
-    let issues = get_issues(write_to_disk).await?;
-    let diagnostics = get_diagnostics(write_to_disk).await?;
+    let write_to_disk = endpoint_write_to_disk_operation(endpoint);
+    let (written, issues, diagnostics, effects) =
+        strongly_consistent_catch_collectables(write_to_disk).await?;
     Ok(WrittenEndpointWithIssues {
         written,
         issues,
         diagnostics,
+        effects,
     }
     .cell())
 }
@@ -122,19 +158,21 @@ pub async fn endpoint_write_to_disk(
     let endpoint = ***endpoint;
     let (written, issues, diags) = turbo_tasks
         .run_once(async move {
+            let operation = get_written_endpoint_with_issues(endpoint);
             let WrittenEndpointWithIssues {
                 written,
                 issues,
                 diagnostics,
-            } = &*get_written_endpoint_with_issues(endpoint)
-                .strongly_consistent()
-                .await?;
+                effects,
+            } = &*operation.strongly_consistent().await?;
+            effects.apply().await?;
+
             Ok((written.clone(), issues.clone(), diagnostics.clone()))
         })
         .await
         .map_err(|e| napi::Error::from_reason(PrettyPrintError(&e).to_string()))?;
     Ok(TurbopackResult {
-        result: NapiWrittenEndpoint::from(written.clone_value()),
+        result: NapiWrittenEndpoint::from(written.map(|v| v.clone_value())),
         issues: issues.iter().map(|i| NapiIssue::from(&**i)).collect(),
         diagnostics: diags.iter().map(|d| NapiDiagnostic::from(d)).collect(),
     })
@@ -153,9 +191,10 @@ pub fn endpoint_server_changed_subscribe(
         func,
         move || {
             async move {
-                subscribe_issues_and_diags(endpoint, issues)
-                    .strongly_consistent()
-                    .await
+                let operation = subscribe_issues_and_diags(endpoint, issues);
+                let result = operation.strongly_consistent().await?;
+                result.effects.apply().await?;
+                Ok(result)
             }
             .instrument(tracing::info_span!("server changes subscription"))
         },
@@ -164,6 +203,7 @@ pub fn endpoint_server_changed_subscribe(
                 changed: _,
                 issues,
                 diagnostics,
+                effects: _,
             } = &*ctx.value;
 
             Ok(vec![TurbopackResult {
@@ -180,15 +220,19 @@ pub fn endpoint_server_changed_subscribe(
 
 #[turbo_tasks::value(shared, serialization = "none", eq = "manual")]
 struct EndpointIssuesAndDiags {
-    changed: ReadRef<Completion>,
+    changed: Option<ReadRef<Completion>>,
     issues: Arc<Vec<ReadRef<PlainIssue>>>,
     diagnostics: Arc<Vec<ReadRef<PlainDiagnostic>>>,
+    effects: Arc<Effects>,
 }
 
 impl PartialEq for EndpointIssuesAndDiags {
     fn eq(&self, other: &Self) -> bool {
-        ReadRef::ptr_eq(&self.changed, &other.changed)
-            && self.issues == other.issues
+        (match (&self.changed, &other.changed) {
+            (Some(a), Some(b)) => ReadRef::ptr_eq(a, b),
+            (None, None) => true,
+            (None, Some(_)) | (Some(_), None) => false,
+        }) && self.issues == other.issues
             && self.diagnostics == other.diagnostics
     }
 }
@@ -197,26 +241,28 @@ impl Eq for EndpointIssuesAndDiags {}
 
 #[turbo_tasks::function]
 async fn subscribe_issues_and_diags(
-    endpoint: Vc<Box<dyn Endpoint>>,
+    endpoint: ResolvedVc<Box<dyn Endpoint>>,
     should_include_issues: bool,
 ) -> Result<Vc<EndpointIssuesAndDiags>> {
-    let changed = endpoint.server_changed();
-    let changed_value = changed.strongly_consistent().await?;
+    let changed = endpoint_server_changed_operation(endpoint);
 
     if should_include_issues {
-        let issues = get_issues(changed).await?;
-        let diagnostics = get_diagnostics(changed).await?;
+        let (changed_value, issues, diagnostics, effects) =
+            strongly_consistent_catch_collectables(changed).await?;
         Ok(EndpointIssuesAndDiags {
             changed: changed_value,
             issues,
             diagnostics,
+            effects,
         }
         .cell())
     } else {
+        let changed_value = changed.connect().strongly_consistent().await?;
         Ok(EndpointIssuesAndDiags {
-            changed: changed_value,
+            changed: Some(changed_value),
             issues: Arc::new(vec![]),
             diagnostics: Arc::new(vec![]),
+            effects: Arc::new(Effects::default()),
         }
         .cell())
     }
@@ -235,7 +281,7 @@ pub fn endpoint_client_changed_subscribe(
         move || {
             async move {
                 let changed = endpoint.client_changed();
-                // We don't capture issues and diagonistics here since we don't want to be
+                // We don't capture issues and diagnostics here since we don't want to be
                 // notified when they change
                 changed.strongly_consistent().await?;
                 Ok(())

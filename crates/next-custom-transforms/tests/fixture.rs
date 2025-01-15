@@ -1,11 +1,13 @@
 use std::{
     env::current_dir,
+    iter::FromIterator,
     path::{Path, PathBuf},
 };
 
 use next_custom_transforms::transforms::{
     amp_attributes::amp_attributes,
     cjs_optimizer::cjs_optimizer,
+    debug_fn_name::debug_fn_name,
     dynamic::{next_dynamic, NextDynamicMode},
     fonts::{next_font_loaders, Config as FontLoaderConfig},
     named_import_transform::named_import_transform,
@@ -15,33 +17,34 @@ use next_custom_transforms::transforms::{
     page_config::page_config_test,
     pure::pure_magic,
     react_server_components::server_components,
-    server_actions::{
-        server_actions, {self},
-    },
+    server_actions::{self, server_actions},
     shake_exports::{shake_exports, Config as ShakeExportsConfig},
     strip_page_exports::{next_transform_strip_page_exports, ExportFilter},
+    warn_for_edge_runtime::warn_for_edge_runtime,
 };
+use rustc_hash::FxHashSet;
 use serde::de::DeserializeOwned;
-use swc_core::ecma::visit::as_folder;
-use turbopack_binding::swc::{
-    core::{
-        common::{chain, comments::SingleThreadedComments, FileName, Mark, SyntaxContext},
-        ecma::{
-            parser::{EsSyntax, Syntax},
-            transforms::{
-                base::resolver,
-                react::jsx,
-                testing::{test, test_fixture},
-            },
+use swc_core::{
+    common::{comments::SingleThreadedComments, FileName, Mark, SyntaxContext},
+    ecma::{
+        ast::Pass,
+        parser::{EsSyntax, Syntax},
+        transforms::{
+            base::resolver,
+            react::jsx,
+            testing::{test_fixture, FixtureTestConfig},
         },
+        utils::ExprCtx,
+        visit::{visit_mut_pass, visit_pass, Visit},
     },
-    custom_transform::relay::{relay, RelayLanguageConfig},
-    testing::fixture,
 };
+use swc_relay::{relay, RelayLanguageConfig};
+use testing::fixture;
 
 fn syntax() -> Syntax {
     Syntax::Es(EsSyntax {
         jsx: true,
+        import_attributes: true,
         ..Default::default()
     })
 }
@@ -63,6 +66,9 @@ fn next_dynamic_fixture(input: PathBuf) {
     let output_dev = input.parent().unwrap().join("output-dev.js");
     let output_prod = input.parent().unwrap().join("output-prod.js");
     let output_server = input.parent().unwrap().join("output-server.js");
+    let output_turbo_dev = input.parent().unwrap().join("output-turbo-dev.js");
+    let output_turbo_prod = input.parent().unwrap().join("output-turbo-prod.js");
+    let output_turbo_server = input.parent().unwrap().join("output-turbo-server.js");
     test_fixture(
         syntax(),
         &|_tr| {
@@ -72,7 +78,7 @@ fn next_dynamic_fixture(input: PathBuf) {
                 false,
                 false,
                 NextDynamicMode::Webpack,
-                FileName::Real(PathBuf::from("/some-project/src/some-file.js")),
+                FileName::Real(PathBuf::from("/some-project/src/some-file.js")).into(),
                 Some("/some-project/src".into()),
             )
         },
@@ -89,7 +95,7 @@ fn next_dynamic_fixture(input: PathBuf) {
                 false,
                 false,
                 NextDynamicMode::Webpack,
-                FileName::Real(PathBuf::from("/some-project/src/some-file.js")),
+                FileName::Real(PathBuf::from("/some-project/src/some-file.js")).into(),
                 Some("/some-project/src".into()),
             )
         },
@@ -106,12 +112,72 @@ fn next_dynamic_fixture(input: PathBuf) {
                 false,
                 false,
                 NextDynamicMode::Webpack,
-                FileName::Real(PathBuf::from("/some-project/src/some-file.js")),
+                FileName::Real(PathBuf::from("/some-project/src/some-file.js")).into(),
                 Some("/some-project/src".into()),
             )
         },
         &input,
         &output_server,
+        Default::default(),
+    );
+    test_fixture(
+        syntax(),
+        &|_tr| {
+            next_dynamic(
+                true,
+                false,
+                false,
+                false,
+                NextDynamicMode::Turbopack {
+                    dynamic_client_transition_name: "next-client-dynamic".to_string(),
+                    dynamic_transition_name: "next-dynamic".to_string(),
+                },
+                FileName::Real(PathBuf::from("/some-project/src/some-file.js")).into(),
+                Some("/some-project/src".into()),
+            )
+        },
+        &input,
+        &output_turbo_dev,
+        Default::default(),
+    );
+    test_fixture(
+        syntax(),
+        &|_tr| {
+            next_dynamic(
+                false,
+                false,
+                false,
+                false,
+                NextDynamicMode::Turbopack {
+                    dynamic_client_transition_name: "next-client-dynamic".to_string(),
+                    dynamic_transition_name: "next-dynamic".to_string(),
+                },
+                FileName::Real(PathBuf::from("/some-project/src/some-file.js")).into(),
+                Some("/some-project/src".into()),
+            )
+        },
+        &input,
+        &output_turbo_prod,
+        Default::default(),
+    );
+    test_fixture(
+        syntax(),
+        &|_tr| {
+            next_dynamic(
+                false,
+                true,
+                false,
+                false,
+                NextDynamicMode::Turbopack {
+                    dynamic_client_transition_name: "next-client-dynamic".to_string(),
+                    dynamic_transition_name: "next-dynamic".to_string(),
+                },
+                FileName::Real(PathBuf::from("/some-project/src/some-file.js")).into(),
+                Some("/some-project/src".into()),
+            )
+        },
+        &input,
+        &output_turbo_server,
         Default::default(),
     );
 }
@@ -125,6 +191,13 @@ fn app_dir_next_dynamic_fixture(input: PathBuf) {
         .parent()
         .unwrap()
         .join("output-server-client-layer.js");
+    let output_turbo_dev = input.parent().unwrap().join("output-turbo-dev.js");
+    let output_turbo_prod = input.parent().unwrap().join("output-turbo-prod.js");
+    let output_turbo_server: PathBuf = input.parent().unwrap().join("output-turbo-server.js");
+    let output_turbo_server_client_layer = input
+        .parent()
+        .unwrap()
+        .join("output-turbo-server-client-layer.js");
     test_fixture(
         syntax(),
         &|_tr| {
@@ -134,7 +207,7 @@ fn app_dir_next_dynamic_fixture(input: PathBuf) {
                 true,
                 false,
                 NextDynamicMode::Webpack,
-                FileName::Real(PathBuf::from("/some-project/src/some-file.js")),
+                FileName::Real(PathBuf::from("/some-project/src/some-file.js")).into(),
                 Some("/some-project/src".into()),
             )
         },
@@ -151,7 +224,7 @@ fn app_dir_next_dynamic_fixture(input: PathBuf) {
                 true,
                 false,
                 NextDynamicMode::Webpack,
-                FileName::Real(PathBuf::from("/some-project/src/some-file.js")),
+                FileName::Real(PathBuf::from("/some-project/src/some-file.js")).into(),
                 Some("/some-project/src".into()),
             )
         },
@@ -168,7 +241,7 @@ fn app_dir_next_dynamic_fixture(input: PathBuf) {
                 true,
                 false,
                 NextDynamicMode::Webpack,
-                FileName::Real(PathBuf::from("/some-project/src/some-file.js")),
+                FileName::Real(PathBuf::from("/some-project/src/some-file.js")).into(),
                 Some("/some-project/src".into()),
             )
         },
@@ -185,12 +258,92 @@ fn app_dir_next_dynamic_fixture(input: PathBuf) {
                 false,
                 false,
                 NextDynamicMode::Webpack,
-                FileName::Real(PathBuf::from("/some-project/src/some-file.js")),
+                FileName::Real(PathBuf::from("/some-project/src/some-file.js")).into(),
                 Some("/some-project/src".into()),
             )
         },
         &input,
         &output_server_client_layer,
+        Default::default(),
+    );
+    test_fixture(
+        syntax(),
+        &|_tr| {
+            next_dynamic(
+                true,
+                false,
+                true,
+                false,
+                NextDynamicMode::Turbopack {
+                    dynamic_client_transition_name: "next-client-dynamic".to_string(),
+                    dynamic_transition_name: "next-dynamic".to_string(),
+                },
+                FileName::Real(PathBuf::from("/some-project/src/some-file.js")).into(),
+                Some("/some-project/src".into()),
+            )
+        },
+        &input,
+        &output_turbo_dev,
+        Default::default(),
+    );
+    test_fixture(
+        syntax(),
+        &|_tr| {
+            next_dynamic(
+                false,
+                false,
+                true,
+                false,
+                NextDynamicMode::Turbopack {
+                    dynamic_client_transition_name: "next-client-dynamic".to_string(),
+                    dynamic_transition_name: "next-dynamic".to_string(),
+                },
+                FileName::Real(PathBuf::from("/some-project/src/some-file.js")).into(),
+                Some("/some-project/src".into()),
+            )
+        },
+        &input,
+        &output_turbo_prod,
+        Default::default(),
+    );
+    test_fixture(
+        syntax(),
+        &|_tr| {
+            next_dynamic(
+                false,
+                true,
+                true,
+                false,
+                NextDynamicMode::Turbopack {
+                    dynamic_client_transition_name: "next-client-dynamic".to_string(),
+                    dynamic_transition_name: "next-dynamic".to_string(),
+                },
+                FileName::Real(PathBuf::from("/some-project/src/some-file.js")).into(),
+                Some("/some-project/src".into()),
+            )
+        },
+        &input,
+        &output_turbo_server,
+        Default::default(),
+    );
+    test_fixture(
+        syntax(),
+        &|_tr| {
+            next_dynamic(
+                false,
+                true,
+                false,
+                false,
+                NextDynamicMode::Turbopack {
+                    dynamic_client_transition_name: "next-client-dynamic".to_string(),
+                    dynamic_transition_name: "next-dynamic".to_string(),
+                },
+                FileName::Real(PathBuf::from("/some-project/src/some-file.js")).into(),
+                Some("/some-project/src".into()),
+            )
+        },
+        &input,
+        &output_turbo_server_client_layer,
         Default::default(),
     );
 }
@@ -206,7 +359,7 @@ fn next_ssg_fixture(input: PathBuf) {
             let jsx = jsx::<SingleThreadedComments>(
                 tr.cm.clone(),
                 None,
-                turbopack_binding::swc::core::ecma::transforms::react::Options {
+                swc_core::ecma::transforms::react::Options {
                     next: false.into(),
                     runtime: None,
                     import_source: Some("".into()),
@@ -220,10 +373,10 @@ fn next_ssg_fixture(input: PathBuf) {
                 top_level_mark,
                 unresolved_mark,
             );
-            chain!(
+            (
                 resolver(unresolved_mark, top_level_mark, true),
                 next_ssg(Default::default()),
-                jsx
+                jsx,
             )
         },
         &input,
@@ -251,7 +404,7 @@ fn relay_no_artifact_dir_fixture(input: PathBuf) {
     test_fixture(
         syntax(),
         &|_tr| {
-            let config = turbopack_binding::swc::custom_transform::relay::Config {
+            let config = swc_relay::Config {
                 language: RelayLanguageConfig::TypeScript,
                 artifact_directory: Some(PathBuf::from("__generated__")),
                 ..Default::default()
@@ -310,6 +463,32 @@ fn shake_exports_fixture_default(input: PathBuf) {
     );
 }
 
+#[fixture("tests/fixture/react-server-components/**/input.ts")]
+fn react_server_components_typescript(input: PathBuf) {
+    use next_custom_transforms::transforms::react_server_components::{Config, Options};
+    let output = input.parent().unwrap().join("output.ts");
+    test_fixture(
+        Syntax::Typescript(Default::default()),
+        &|tr| {
+            server_components(
+                FileName::Real(PathBuf::from("/some-project/src/some-file.js")).into(),
+                Config::WithOptions(Options {
+                    is_react_server_layer: true,
+                    dynamic_io_enabled: false,
+                }),
+                tr.comments.as_ref().clone(),
+                None,
+            )
+        },
+        &input,
+        &output,
+        FixtureTestConfig {
+            module: Some(true),
+            ..Default::default()
+        },
+    );
+}
+
 #[fixture("tests/fixture/react-server-components/server-graph/**/input.js")]
 fn react_server_components_server_graph_fixture(input: PathBuf) {
     use next_custom_transforms::transforms::react_server_components::{Config, Options};
@@ -318,9 +497,10 @@ fn react_server_components_server_graph_fixture(input: PathBuf) {
         syntax(),
         &|tr| {
             server_components(
-                FileName::Real(PathBuf::from("/some-project/src/some-file.js")),
+                FileName::Real(PathBuf::from("/some-project/src/some-file.js")).into(),
                 Config::WithOptions(Options {
                     is_react_server_layer: true,
+                    dynamic_io_enabled: false,
                 }),
                 tr.comments.as_ref().clone(),
                 None,
@@ -328,7 +508,10 @@ fn react_server_components_server_graph_fixture(input: PathBuf) {
         },
         &input,
         &output,
-        Default::default(),
+        FixtureTestConfig {
+            module: Some(true),
+            ..Default::default()
+        },
     );
 }
 
@@ -340,9 +523,10 @@ fn react_server_components_client_graph_fixture(input: PathBuf) {
         syntax(),
         &|tr| {
             server_components(
-                FileName::Real(PathBuf::from("/some-project/src/some-file.js")),
+                FileName::Real(PathBuf::from("/some-project/src/some-file.js")).into(),
                 Config::WithOptions(Options {
                     is_react_server_layer: false,
+                    dynamic_io_enabled: false,
                 }),
                 tr.comments.as_ref().clone(),
                 None,
@@ -377,16 +561,51 @@ fn server_actions_server_fixture(input: PathBuf) {
     test_fixture(
         syntax(),
         &|_tr| {
-            chain!(
+            (
                 resolver(Mark::new(), Mark::new(), false),
                 server_actions(
                     &FileName::Real("/app/item.js".into()),
                     server_actions::Config {
                         is_react_server_layer: true,
-                        enabled: true
+                        dynamic_io_enabled: true,
+                        hash_salt: "".into(),
+                        cache_kinds: FxHashSet::from_iter(["x".into()]),
                     },
                     _tr.comments.as_ref().clone(),
-                )
+                ),
+            )
+        },
+        &input,
+        &output,
+        FixtureTestConfig {
+            module: Some(true),
+            ..Default::default()
+        },
+    );
+}
+
+#[fixture("tests/fixture/next-font-with-directive/**/input.js")]
+fn next_font_with_directive_fixture(input: PathBuf) {
+    let output = input.parent().unwrap().join("output.js");
+    test_fixture(
+        syntax(),
+        &|_tr| {
+            (
+                resolver(Mark::new(), Mark::new(), false),
+                next_font_loaders(FontLoaderConfig {
+                    relative_file_path_from_root: "app/test.tsx".into(),
+                    font_loaders: vec!["@next/font/google".into()],
+                }),
+                server_actions(
+                    &FileName::Real("/app/test.tsx".into()),
+                    server_actions::Config {
+                        is_react_server_layer: true,
+                        dynamic_io_enabled: true,
+                        hash_salt: "".into(),
+                        cache_kinds: FxHashSet::default(),
+                    },
+                    _tr.comments.as_ref().clone(),
+                ),
             )
         },
         &input,
@@ -401,21 +620,26 @@ fn server_actions_client_fixture(input: PathBuf) {
     test_fixture(
         syntax(),
         &|_tr| {
-            chain!(
+            (
                 resolver(Mark::new(), Mark::new(), false),
                 server_actions(
                     &FileName::Real("/app/item.js".into()),
                     server_actions::Config {
                         is_react_server_layer: false,
-                        enabled: true
+                        dynamic_io_enabled: true,
+                        hash_salt: "".into(),
+                        cache_kinds: FxHashSet::default(),
                     },
                     _tr.comments.as_ref().clone(),
-                )
+                ),
             )
         },
         &input,
         &output,
-        Default::default(),
+        FixtureTestConfig {
+            module: Some(true),
+            ..Default::default()
+        },
     );
 }
 
@@ -430,9 +654,9 @@ fn cjs_optimize_fixture(input: PathBuf) {
 
             let unresolved_ctxt = SyntaxContext::empty().apply_mark(unresolved_mark);
 
-            chain!(
+            (
                 resolver(unresolved_mark, top_level_mark, false),
-                as_folder(cjs_optimizer(
+                visit_mut_pass(cjs_optimizer(
                     json(
                         r#"
                         {
@@ -444,15 +668,18 @@ fn cjs_optimize_fixture(input: PathBuf) {
                                 }
                             }
                         }
-                        "#
+                        "#,
                     ),
-                    unresolved_ctxt
-                ))
+                    unresolved_ctxt,
+                )),
             )
         },
         &input,
         &output,
-        Default::default(),
+        FixtureTestConfig {
+            module: Some(true),
+            ..Default::default()
+        },
     );
 }
 
@@ -465,15 +692,15 @@ fn named_import_transform_fixture(input: PathBuf) {
             let unresolved_mark = Mark::new();
             let top_level_mark = Mark::new();
 
-            chain!(
+            (
                 resolver(unresolved_mark, top_level_mark, false),
                 named_import_transform(json(
                     r#"
                     {
                         "packages": ["foo", "bar"]
                     }
-                    "#
-                ))
+                    "#,
+                )),
             )
         },
         &input,
@@ -491,15 +718,15 @@ fn optimize_barrel_fixture(input: PathBuf) {
             let unresolved_mark = Mark::new();
             let top_level_mark = Mark::new();
 
-            chain!(
+            (
                 resolver(unresolved_mark, top_level_mark, false),
                 optimize_barrel(json(
                     r#"
                         {
                             "wildcard": false
                         }
-                    "#
-                ))
+                    "#,
+                )),
             )
         },
         &input,
@@ -517,15 +744,15 @@ fn optimize_barrel_wildcard_fixture(input: PathBuf) {
             let unresolved_mark = Mark::new();
             let top_level_mark = Mark::new();
 
-            chain!(
+            (
                 resolver(unresolved_mark, top_level_mark, false),
                 optimize_barrel(json(
                     r#"
                         {
                             "wildcard": true
                         }
-                    "#
-                ))
+                    "#,
+                )),
             )
         },
         &input,
@@ -543,11 +770,11 @@ fn optimize_server_react_fixture(input: PathBuf) {
             let unresolved_mark = Mark::new();
             let top_level_mark = Mark::new();
 
-            chain!(
+            (
                 resolver(unresolved_mark, top_level_mark, false),
                 optimize_server_react(optimize_server_react::Config {
-                    optimize_use_state: true
-                })
+                    optimize_use_state: true,
+                }),
             )
         },
         &input,
@@ -572,9 +799,9 @@ fn pure(input: PathBuf) {
             let unresolved_mark = Mark::new();
             let top_level_mark = Mark::new();
 
-            chain!(
+            (
                 resolver(unresolved_mark, top_level_mark, false),
-                as_folder(pure_magic(tr.comments.clone()))
+                visit_mut_pass(pure_magic(tr.comments.clone())),
             )
         },
         &input,
@@ -605,15 +832,18 @@ fn run_stip_page_exports_test(input: &Path, output: &Path, mode: ExportFilter) {
                 top_level_mark,
                 unresolved_mark,
             );
-            chain!(
+            (
                 swc_core::ecma::transforms::base::resolver(unresolved_mark, top_level_mark, true),
                 next_transform_strip_page_exports(mode, Default::default()),
-                jsx
+                jsx,
             )
         },
         input,
         output,
-        Default::default(),
+        FixtureTestConfig {
+            module: Some(true),
+            ..Default::default()
+        },
     );
 }
 
@@ -629,4 +859,66 @@ fn next_transform_strip_page_exports_fixture_default(output: PathBuf) {
     let input = output.parent().unwrap().join("input.js");
 
     run_stip_page_exports_test(&input, &output, ExportFilter::StripDataExports);
+}
+
+#[fixture("tests/fixture/debug-fn-name/**/input.js")]
+fn test_debug_name(input: PathBuf) {
+    let output = input.parent().unwrap().join("output.js");
+
+    test_fixture(
+        syntax(),
+        &|_| {
+            let top_level_mark = Mark::fresh(Mark::root());
+            let unresolved_mark = Mark::fresh(Mark::root());
+
+            (
+                swc_core::ecma::transforms::base::resolver(unresolved_mark, top_level_mark, true),
+                debug_fn_name(),
+            )
+        },
+        &input,
+        &output,
+        Default::default(),
+    );
+}
+
+#[fixture("tests/fixture/edge-assert/**/input.js")]
+fn test_edge_assert(input: PathBuf) {
+    let output = input.parent().unwrap().join("output.js");
+
+    test_fixture(
+        syntax(),
+        &|t| {
+            let top_level_mark = Mark::fresh(Mark::root());
+            let unresolved_mark = Mark::fresh(Mark::root());
+
+            (
+                swc_core::ecma::transforms::base::resolver(unresolved_mark, top_level_mark, true),
+                lint_to_fold(warn_for_edge_runtime(
+                    t.cm.clone(),
+                    ExprCtx {
+                        is_unresolved_ref_safe: false,
+                        unresolved_ctxt: SyntaxContext::empty().apply_mark(unresolved_mark),
+                        in_strict: false,
+                    },
+                    true,
+                    true,
+                )),
+            )
+        },
+        &input,
+        &output,
+        FixtureTestConfig {
+            allow_error: true,
+            module: Some(true),
+            ..Default::default()
+        },
+    );
+}
+
+fn lint_to_fold<R>(r: R) -> impl Pass
+where
+    R: Visit,
+{
+    visit_pass(r)
 }

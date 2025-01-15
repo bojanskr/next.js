@@ -1,11 +1,13 @@
-import { nextTestSetup } from 'e2e-utils'
+import { FileRef, nextTestSetup } from 'e2e-utils'
 import { retry, waitFor } from 'next-test-utils'
+import path from 'path'
 
 const envFile = '.env.development.local'
 
 describe(`app-dir-hmr`, () => {
   const { next } = nextTestSetup({
-    files: __dirname,
+    files: new FileRef(path.join(__dirname, 'fixtures', 'default-template')),
+    patchFileDelay: 1000,
   })
 
   describe('filesystem changes', () => {
@@ -60,9 +62,15 @@ describe(`app-dir-hmr`, () => {
       await browser.eval('window.__TEST_NO_RELOAD = true')
 
       expect(await browser.elementByCss('p').text()).toBe('mac')
-      await next.patchFile(envFile, 'MY_DEVICE="ipad"')
 
-      try {
+      const getCliOutput = next.getCliOutputFromHere()
+      await next.patchFile(envFile, 'MY_DEVICE="ipad"', async () => {
+        await waitFor(() => getCliOutput().includes('Reload env'))
+
+        await retry(async () => {
+          expect(await browser.elementByCss('p').text()).toBe('ipad')
+        })
+
         const logs = await browser.log()
 
         if (process.env.TURBOPACK) {
@@ -131,116 +139,67 @@ describe(`app-dir-hmr`, () => {
             },
           ])
         }
-      } finally {
-        // TOOD: use sandbox instead
-        await next.patchFile(envFile, 'MY_DEVICE="mac"')
-        await retry(async () => {
-          expect(await browser.elementByCss('p').text()).toBe('mac')
-        })
-      }
-    })
-
-    it('should update server components pages when env files is changed (nodejs)', async () => {
-      const browser = await next.browser('/env/node')
-      expect(await browser.elementByCss('p').text()).toBe('mac')
-      await next.patchFile(envFile, 'MY_DEVICE="ipad"')
-
-      const logs = await browser.log()
-      await retry(async () => {
-        expect(logs).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({
-              message: '[Fast Refresh] rebuilding',
-              source: 'log',
-            }),
-          ])
-        )
       })
 
-      try {
-        await retry(async () => {
-          expect(await browser.elementByCss('p').text()).toBe('ipad')
-        })
-
-        if (process.env.TURBOPACK) {
-          // FIXME: Turbopack should have matching "done in" for each "rebuilding"
-          expect(logs).not.toEqual(
-            expect.arrayContaining([
-              expect.objectContaining({
-                message: expect.stringContaining('[Fast Refresh] done in'),
-                source: 'log',
-              }),
-            ])
-          )
-        } else {
-          expect(logs).toEqual(
-            expect.arrayContaining([
-              expect.objectContaining({
-                message: expect.stringContaining('[Fast Refresh] done in'),
-                source: 'log',
-              }),
-            ])
-          )
-        }
-      } finally {
-        // TOOD: use sandbox instead
-        await next.patchFile(envFile, 'MY_DEVICE="mac"')
-        await retry(async () => {
-          expect(await browser.elementByCss('p').text()).toBe('mac')
-        })
-      }
-    })
-
-    it('should update server components pages when env files is changed (edge)', async () => {
-      const browser = await next.browser('/env/edge')
-      expect(await browser.elementByCss('p').text()).toBe('mac')
-      await next.patchFile(envFile, 'MY_DEVICE="ipad"')
-
-      const logs = await browser.log()
+      // ensure it's restored back to "mac" before the next test
       await retry(async () => {
-        expect(logs).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({
-              message: '[Fast Refresh] rebuilding',
-              source: 'log',
-            }),
-          ])
-        )
+        expect(await browser.elementByCss('p').text()).toBe('mac')
       })
+    })
 
-      try {
-        await retry(async () => {
-          expect(await browser.elementByCss('p').text()).toBe('ipad')
+    it.each(['node', 'node-module-var', 'edge', 'edge-module-var'])(
+      'should update server components pages when env files is changed (%s)',
+      async (page) => {
+        const browser = await next.browser(`/env/${page}`)
+        expect(await browser.elementByCss('p').text()).toBe('mac')
+
+        await next.patchFile(envFile, 'MY_DEVICE="ipad"', async () => {
+          let logs
+
+          await retry(async () => {
+            logs = await browser.log()
+            expect(logs).toEqual(
+              expect.arrayContaining([
+                expect.objectContaining({
+                  message: '[Fast Refresh] rebuilding',
+                  source: 'log',
+                }),
+              ])
+            )
+          })
+
+          await retry(async () => {
+            expect(await browser.elementByCss('p').text()).toBe('ipad')
+          })
+
+          if (process.env.TURBOPACK) {
+            // FIXME: Turbopack should have matching "done in" for each "rebuilding"
+            expect(logs).not.toEqual(
+              expect.arrayContaining([
+                expect.objectContaining({
+                  message: expect.stringContaining('[Fast Refresh] done in'),
+                  source: 'log',
+                }),
+              ])
+            )
+          } else {
+            expect(logs).toEqual(
+              expect.arrayContaining([
+                expect.objectContaining({
+                  message: expect.stringContaining('[Fast Refresh] done in'),
+                  source: 'log',
+                }),
+              ])
+            )
+          }
         })
 
-        if (process.env.TURBOPACK) {
-          // FIXME: Turbopack should have matching "done in" for each "rebuilding"
-          expect(logs).not.toEqual(
-            expect.arrayContaining([
-              expect.objectContaining({
-                message: expect.stringContaining('[Fast Refresh] done in'),
-                source: 'log',
-              }),
-            ])
-          )
-        } else {
-          expect(logs).toEqual(
-            expect.arrayContaining([
-              expect.objectContaining({
-                message: expect.stringContaining('[Fast Refresh] done in'),
-                source: 'log',
-              }),
-            ])
-          )
-        }
-      } finally {
-        // TOOD: use sandbox instead
-        await next.patchFile(envFile, 'MY_DEVICE="mac"')
+        // ensure it's restored back to "mac" before the next test
         await retry(async () => {
           expect(await browser.elementByCss('p').text()).toBe('mac')
         })
       }
-    })
+    )
 
     it('should have no unexpected action error for hmr', async () => {
       expect(next.cliOutput).not.toContain('Unexpected action')

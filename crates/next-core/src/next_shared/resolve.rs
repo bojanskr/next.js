@@ -2,23 +2,21 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 use lazy_static::lazy_static;
-use turbo_tasks::{RcStr, Value, Vc};
-use turbo_tasks_fs::glob::Glob;
-use turbopack_binding::{
-    turbo::tasks_fs::FileSystemPath,
-    turbopack::core::{
-        diagnostics::DiagnosticExt,
-        file_source::FileSource,
-        issue::{Issue, IssueExt, IssueSeverity, IssueStage, OptionStyledString, StyledString},
-        reference_type::ReferenceType,
-        resolve::{
-            parse::Request,
-            plugin::{
-                AfterResolvePlugin, AfterResolvePluginCondition, BeforeResolvePlugin,
-                BeforeResolvePluginCondition,
-            },
-            ExternalType, ResolveResult, ResolveResultItem, ResolveResultOption,
+use turbo_rcstr::RcStr;
+use turbo_tasks::{ResolvedVc, Value, Vc};
+use turbo_tasks_fs::{glob::Glob, FileSystemPath};
+use turbopack_core::{
+    diagnostics::DiagnosticExt,
+    file_source::FileSource,
+    issue::{Issue, IssueExt, IssueSeverity, IssueStage, OptionStyledString, StyledString},
+    reference_type::ReferenceType,
+    resolve::{
+        parse::Request,
+        plugin::{
+            AfterResolvePlugin, AfterResolvePluginCondition, BeforeResolvePlugin,
+            BeforeResolvePluginCondition,
         },
+        ExternalTraced, ExternalType, ResolveResult, ResolveResultItem, ResolveResultOption,
     },
 };
 
@@ -45,7 +43,7 @@ lazy_static! {
 
 #[turbo_tasks::value(shared)]
 pub struct InvalidImportModuleIssue {
-    pub file_path: Vc<FileSystemPath>,
+    pub file_path: ResolvedVc<FileSystemPath>,
     pub messages: Vec<RcStr>,
     pub skip_context_message: bool,
 }
@@ -69,7 +67,7 @@ impl Issue for InvalidImportModuleIssue {
 
     #[turbo_tasks::function]
     fn file_path(&self) -> Vc<FileSystemPath> {
-        self.file_path
+        *self.file_path
     }
 
     #[turbo_tasks::function]
@@ -91,7 +89,7 @@ impl Issue for InvalidImportModuleIssue {
                     .map(|v| StyledString::Text(format!("{}\n", v).into()))
                     .collect::<Vec<StyledString>>(),
             )
-            .cell(),
+            .resolved_cell(),
         )))
     }
 }
@@ -102,7 +100,7 @@ impl Issue for InvalidImportModuleIssue {
 /// configured when each context sets up its resolve options.
 #[turbo_tasks::value]
 pub(crate) struct InvalidImportResolvePlugin {
-    root: Vc<FileSystemPath>,
+    root: ResolvedVc<FileSystemPath>,
     invalid_import: RcStr,
     message: Vec<RcStr>,
 }
@@ -110,7 +108,11 @@ pub(crate) struct InvalidImportResolvePlugin {
 #[turbo_tasks::value_impl]
 impl InvalidImportResolvePlugin {
     #[turbo_tasks::function]
-    pub fn new(root: Vc<FileSystemPath>, invalid_import: RcStr, message: Vec<RcStr>) -> Vc<Self> {
+    pub fn new(
+        root: ResolvedVc<FileSystemPath>,
+        invalid_import: RcStr,
+        message: Vec<RcStr>,
+    ) -> Vc<Self> {
         InvalidImportResolvePlugin {
             root,
             invalid_import,
@@ -128,27 +130,27 @@ impl BeforeResolvePlugin for InvalidImportResolvePlugin {
     }
 
     #[turbo_tasks::function]
-    async fn before_resolve(
+    fn before_resolve(
         &self,
-        lookup_path: Vc<FileSystemPath>,
+        lookup_path: ResolvedVc<FileSystemPath>,
         _reference_type: Value<ReferenceType>,
         _request: Vc<Request>,
-    ) -> Result<Vc<ResolveResultOption>> {
+    ) -> Vc<ResolveResultOption> {
         InvalidImportModuleIssue {
             file_path: lookup_path,
             messages: self.message.clone(),
             // styled-jsx specific resolve error has its own message
             skip_context_message: self.invalid_import == "styled-jsx",
         }
-        .cell()
+        .resolved_cell()
         .emit();
 
-        Ok(ResolveResultOption::some(
-            ResolveResult::primary(ResolveResultItem::Error(Vc::cell(
+        ResolveResultOption::some(
+            ResolveResult::primary(ResolveResultItem::Error(ResolvedVc::cell(
                 self.message.join("\n").into(),
             )))
             .cell(),
-        ))
+        )
     }
 }
 
@@ -156,10 +158,10 @@ impl BeforeResolvePlugin for InvalidImportResolvePlugin {
 /// Only the contexts that alises `client-only` to
 /// `next/dist/compiled/client-only/error` should use this.
 pub(crate) fn get_invalid_client_only_resolve_plugin(
-    root: Vc<FileSystemPath>,
+    root: ResolvedVc<FileSystemPath>,
 ) -> Vc<InvalidImportResolvePlugin> {
     InvalidImportResolvePlugin::new(
-        root,
+        *root,
         "client-only".into(),
         vec![
             "'client-only' cannot be imported from a Server Component module. It should only be \
@@ -173,10 +175,10 @@ pub(crate) fn get_invalid_client_only_resolve_plugin(
 /// Only the contexts that alises `server-only` to
 /// `next/dist/compiled/server-only/index` should use this.
 pub(crate) fn get_invalid_server_only_resolve_plugin(
-    root: Vc<FileSystemPath>,
+    root: ResolvedVc<FileSystemPath>,
 ) -> Vc<InvalidImportResolvePlugin> {
     InvalidImportResolvePlugin::new(
-        root,
+        *root,
         "server-only".into(),
         vec![
             "'server-only' cannot be imported from a Client Component module. It should only be \
@@ -188,10 +190,10 @@ pub(crate) fn get_invalid_server_only_resolve_plugin(
 
 /// Returns a resolve plugin if context have imports to `styled-jsx`.
 pub(crate) fn get_invalid_styled_jsx_resolve_plugin(
-    root: Vc<FileSystemPath>,
+    root: ResolvedVc<FileSystemPath>,
 ) -> Vc<InvalidImportResolvePlugin> {
     InvalidImportResolvePlugin::new(
-        root,
+        *root,
         "styled-jsx".into(),
         vec![
             "'client-only' cannot be imported from a Server Component module. It should only be \
@@ -207,14 +209,14 @@ pub(crate) fn get_invalid_styled_jsx_resolve_plugin(
 
 #[turbo_tasks::value]
 pub(crate) struct NextExternalResolvePlugin {
-    root: Vc<FileSystemPath>,
+    project_path: ResolvedVc<FileSystemPath>,
 }
 
 #[turbo_tasks::value_impl]
 impl NextExternalResolvePlugin {
     #[turbo_tasks::function]
-    pub fn new(root: Vc<FileSystemPath>) -> Vc<Self> {
-        NextExternalResolvePlugin { root }.cell()
+    pub fn new(project_path: ResolvedVc<FileSystemPath>) -> Vc<Self> {
+        NextExternalResolvePlugin { project_path }.cell()
     }
 }
 
@@ -223,7 +225,7 @@ impl AfterResolvePlugin for NextExternalResolvePlugin {
     #[turbo_tasks::function]
     fn after_resolve_condition(&self) -> Vc<AfterResolvePluginCondition> {
         AfterResolvePluginCondition::new(
-            self.root.root(),
+            self.project_path.root(),
             Glob::new("**/next/dist/**/*.{external,runtime.dev,runtime.prod}.js".into()),
         )
     }
@@ -232,39 +234,48 @@ impl AfterResolvePlugin for NextExternalResolvePlugin {
     async fn after_resolve(
         &self,
         fs_path: Vc<FileSystemPath>,
-        _context: Vc<FileSystemPath>,
+        _lookup_path: Vc<FileSystemPath>,
         _reference_type: Value<ReferenceType>,
         _request: Vc<Request>,
     ) -> Result<Vc<ResolveResultOption>> {
-        let raw_fs_path = &*fs_path.await?;
-        let path = raw_fs_path.path.to_string();
+        let path = fs_path.await?.path.to_string();
         // Find the starting index of 'next/dist' and slice from that point. It should
         // always be found since the glob pattern above is specific enough.
         let starting_index = path.find("next/dist").unwrap();
+        let specifier = &path[starting_index..];
         // Replace '/esm/' with '/' to match the CJS version of the file.
-        let modified_path = path[starting_index..].replace("/esm/", "/");
+        let specifier: RcStr = specifier.replace("/esm/", "/").into();
+
         Ok(Vc::cell(Some(
-            ResolveResult::primary(ResolveResultItem::External(
-                modified_path.into(),
-                ExternalType::CommonJs,
-            ))
-            .into(),
+            ResolveResult::primary(ResolveResultItem::External {
+                name: specifier.clone(),
+                ty: ExternalType::CommonJs,
+                traced: ExternalTraced::Traced,
+            })
+            .resolved_cell(),
         )))
     }
 }
 
 #[turbo_tasks::value]
 pub(crate) struct NextNodeSharedRuntimeResolvePlugin {
-    root: Vc<FileSystemPath>,
-    context: ServerContextType,
+    root: ResolvedVc<FileSystemPath>,
+    server_context_type: ServerContextType,
 }
 
 #[turbo_tasks::value_impl]
 impl NextNodeSharedRuntimeResolvePlugin {
     #[turbo_tasks::function]
-    pub fn new(root: Vc<FileSystemPath>, context: Value<ServerContextType>) -> Vc<Self> {
-        let context = context.into_value();
-        NextNodeSharedRuntimeResolvePlugin { root, context }.cell()
+    pub fn new(
+        root: ResolvedVc<FileSystemPath>,
+        server_context_type: Value<ServerContextType>,
+    ) -> Vc<Self> {
+        let server_context_type = server_context_type.into_value();
+        NextNodeSharedRuntimeResolvePlugin {
+            root,
+            server_context_type,
+        }
+        .cell()
     }
 }
 
@@ -282,7 +293,7 @@ impl AfterResolvePlugin for NextNodeSharedRuntimeResolvePlugin {
     async fn after_resolve(
         &self,
         fs_path: Vc<FileSystemPath>,
-        _context: Vc<FileSystemPath>,
+        _lookup_path: Vc<FileSystemPath>,
         _reference_type: Value<ReferenceType>,
         _request: Vc<Request>,
     ) -> Result<Vc<ResolveResultOption>> {
@@ -292,7 +303,7 @@ impl AfterResolvePlugin for NextNodeSharedRuntimeResolvePlugin {
 
         let resource_request = format!(
             "next/dist/server/route-modules/{}/vendored/contexts/{}.js",
-            match self.context {
+            match self.server_context_type {
                 ServerContextType::AppRoute { .. } => "app-route",
                 ServerContextType::AppSSR { .. } | ServerContextType::AppRSC { .. } => "app-page",
                 // Use default pages context for all other contexts.
@@ -315,7 +326,10 @@ impl AfterResolvePlugin for NextNodeSharedRuntimeResolvePlugin {
             .join(format!("{base}/{resource_request}").into());
 
         Ok(Vc::cell(Some(
-            ResolveResult::source(Vc::upcast(FileSource::new(new_path))).into(),
+            ResolveResult::source(ResolvedVc::upcast(
+                FileSource::new(new_path).to_resolved().await?,
+            ))
+            .resolved_cell(),
         )))
     }
 }
@@ -324,13 +338,13 @@ impl AfterResolvePlugin for NextNodeSharedRuntimeResolvePlugin {
 /// telemetry events if there is a match.
 #[turbo_tasks::value]
 pub(crate) struct ModuleFeatureReportResolvePlugin {
-    root: Vc<FileSystemPath>,
+    root: ResolvedVc<FileSystemPath>,
 }
 
 #[turbo_tasks::value_impl]
 impl ModuleFeatureReportResolvePlugin {
     #[turbo_tasks::function]
-    pub fn new(root: Vc<FileSystemPath>) -> Vc<Self> {
+    pub fn new(root: ResolvedVc<FileSystemPath>) -> Vc<Self> {
         ModuleFeatureReportResolvePlugin { root }.cell()
     }
 }
@@ -369,7 +383,7 @@ impl BeforeResolvePlugin for ModuleFeatureReportResolvePlugin {
 
                 if let Some(sub_path) = sub_path {
                     ModuleFeatureTelemetry::new(format!("{}{}", module, sub_path).into(), 1)
-                        .cell()
+                        .resolved_cell()
                         .emit();
                 }
             }
@@ -381,13 +395,13 @@ impl BeforeResolvePlugin for ModuleFeatureReportResolvePlugin {
 
 #[turbo_tasks::value]
 pub(crate) struct NextSharedRuntimeResolvePlugin {
-    root: Vc<FileSystemPath>,
+    root: ResolvedVc<FileSystemPath>,
 }
 
 #[turbo_tasks::value_impl]
 impl NextSharedRuntimeResolvePlugin {
     #[turbo_tasks::function]
-    pub fn new(root: Vc<FileSystemPath>) -> Vc<Self> {
+    pub fn new(root: ResolvedVc<FileSystemPath>) -> Vc<Self> {
         NextSharedRuntimeResolvePlugin { root }.cell()
     }
 }
@@ -406,7 +420,7 @@ impl AfterResolvePlugin for NextSharedRuntimeResolvePlugin {
     async fn after_resolve(
         &self,
         fs_path: Vc<FileSystemPath>,
-        _context: Vc<FileSystemPath>,
+        _lookup_path: Vc<FileSystemPath>,
         _reference_type: Value<ReferenceType>,
         _request: Vc<Request>,
     ) -> Result<Vc<ResolveResultOption>> {
@@ -414,7 +428,10 @@ impl AfterResolvePlugin for NextSharedRuntimeResolvePlugin {
         let modified_path = raw_fs_path.path.replace("next/dist/esm/", "next/dist/");
         let new_path = fs_path.root().join(modified_path.into());
         Ok(Vc::cell(Some(
-            ResolveResult::source(Vc::upcast(FileSource::new(new_path))).into(),
+            ResolveResult::source(ResolvedVc::upcast(
+                FileSource::new(new_path).to_resolved().await?,
+            ))
+            .resolved_cell(),
         )))
     }
 }

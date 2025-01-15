@@ -2,22 +2,22 @@ use std::path::{Path, PathBuf};
 
 use next_custom_transforms::chain_transforms::{custom_before_pass, TransformOptions};
 use serde::de::DeserializeOwned;
-use swc_core::ecma::parser::TsSyntax;
-use turbopack_binding::swc::{
-    core::{
-        base::Compiler,
-        common::{comments::SingleThreadedComments, Mark},
-        ecma::{parser::Syntax, transforms::base::pass::noop},
+use swc_core::{
+    base::Compiler,
+    common::{comments::SingleThreadedComments, Mark},
+    ecma::{
+        ast::noop_pass,
+        parser::{Syntax, TsSyntax},
     },
-    testing::{NormalizedOutput, Tester},
 };
+use testing::{NormalizedOutput, Tester};
 
-#[turbopack_binding::swc::testing::fixture("tests/full/**/input.js")]
+#[testing::fixture("tests/full/**/input.js")]
 fn full(input: PathBuf) {
     test(&input, true);
 }
 
-#[turbopack_binding::swc::testing::fixture("tests/loader/**/input.js")]
+#[testing::fixture("tests/loader/**/input.js")]
 fn loader(input: PathBuf) {
     test(&input, false);
 }
@@ -32,16 +32,15 @@ fn test(input: &Path, minify: bool) {
             let fm = cm.load_file(input).expect("failed to load file");
 
             let options = TransformOptions {
-                swc: turbopack_binding::swc::core::base::config::Options {
+                lint_codemod_comments: true,
+                swc: swc_core::base::config::Options {
                     swcrc: true,
                     output_path: Some(output.clone()),
 
-                    config: turbopack_binding::swc::core::base::config::Config {
-                        is_module: Some(
-                            turbopack_binding::swc::core::base::config::IsModule::Bool(true),
-                        ),
+                    config: swc_core::base::config::Config {
+                        is_module: Some(swc_core::base::config::IsModule::Bool(true)),
 
-                        jsc: turbopack_binding::swc::core::base::config::JscConfig {
+                        jsc: swc_core::base::config::JscConfig {
                             minify: if minify {
                                 Some(assert_json("{ \"compress\": true, \"mangle\": true }"))
                             } else {
@@ -81,6 +80,7 @@ fn test(input: &Path, minify: bool) {
                 optimize_barrel_exports: None,
                 optimize_server_react: None,
                 prefer_esm: false,
+                debug_function_name: false,
             };
 
             let unresolved_mark = Mark::new();
@@ -104,7 +104,7 @@ fn test(input: &Path, minify: bool) {
                         unresolved_mark,
                     )
                 },
-                |_| noop(),
+                |_| noop_pass(),
             ) {
                 Ok(v) => {
                     NormalizedOutput::from(v.code)

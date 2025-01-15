@@ -4,18 +4,14 @@ use next_custom_transforms::transforms::page_static_info::{
     collect_exports, extract_exported_const_values, Const,
 };
 use serde_json::Value;
-use turbo_tasks::Vc;
+use swc_core::ecma::ast::Program;
+use turbo_tasks::{ResolvedVc, Vc};
 use turbo_tasks_fs::FileSystemPath;
-use turbopack_binding::{
-    swc::core::ecma::ast::Program,
-    turbopack::{
-        core::issue::{
-            Issue, IssueExt, IssueSeverity, IssueStage, OptionStyledString, StyledString,
-        },
-        ecmascript::{CustomTransformer, EcmascriptInputTransform, TransformContext},
-        turbopack::module_options::{ModuleRule, ModuleRuleEffect},
-    },
+use turbopack::module_options::{ModuleRule, ModuleRuleEffect};
+use turbopack_core::issue::{
+    Issue, IssueExt, IssueSeverity, IssueStage, OptionStyledString, StyledString,
 };
+use turbopack_ecmascript::{CustomTransformer, EcmascriptInputTransform, TransformContext};
 
 use super::module_rule_match_js_no_url;
 use crate::{next_client::ClientContextType, next_server::ServerContextType};
@@ -29,15 +25,16 @@ pub fn get_next_page_static_info_assert_rule(
     server_context: Option<ServerContextType>,
     client_context: Option<ClientContextType>,
 ) -> ModuleRule {
-    let transformer = EcmascriptInputTransform::Plugin(Vc::cell(Box::new(NextPageStaticInfo {
-        server_context,
-        client_context,
-    }) as _));
+    let transformer =
+        EcmascriptInputTransform::Plugin(ResolvedVc::cell(Box::new(NextPageStaticInfo {
+            server_context,
+            client_context,
+        }) as _));
     ModuleRule::new(
         module_rule_match_js_no_url(enable_mdx_rs),
         vec![ModuleRuleEffect::ExtendEcmascriptTransforms {
-            prepend: Vc::cell(vec![transformer]),
-            append: Vc::cell(vec![]),
+            prepend: ResolvedVc::cell(vec![transformer]),
+            append: ResolvedVc::cell(vec![]),
         }],
     )
 }
@@ -79,7 +76,7 @@ impl CustomTransformer for NextPageStaticInfo {
                         ],
                         severity: IssueSeverity::Warning,
                     }
-                    .cell()
+                    .resolved_cell()
                     .emit();
                 }
             }
@@ -108,7 +105,7 @@ impl CustomTransformer for NextPageStaticInfo {
                         messages,
                         severity: IssueSeverity::Warning,
                     }
-                    .cell()
+                    .resolved_cell()
                     .emit();
                 }
             }
@@ -122,7 +119,7 @@ impl CustomTransformer for NextPageStaticInfo {
                     messages: vec![format!(r#"Page "{}" cannot use both "use client" and export function "generateStaticParams()"."#, ctx.file_path_str)],
                     severity: IssueSeverity::Error,
                 }
-                .cell()
+                .resolved_cell()
                 .emit();
             }
         }
@@ -133,7 +130,7 @@ impl CustomTransformer for NextPageStaticInfo {
 
 #[turbo_tasks::value(shared)]
 pub struct PageStaticInfoIssue {
-    pub file_path: Vc<FileSystemPath>,
+    pub file_path: ResolvedVc<FileSystemPath>,
     pub messages: Vec<String>,
     pub severity: IssueSeverity,
 }
@@ -157,19 +154,19 @@ impl Issue for PageStaticInfoIssue {
 
     #[turbo_tasks::function]
     fn file_path(&self) -> Vc<FileSystemPath> {
-        self.file_path
+        *self.file_path
     }
 
     #[turbo_tasks::function]
-    async fn description(&self) -> Result<Vc<OptionStyledString>> {
-        Ok(Vc::cell(Some(
+    fn description(&self) -> Vc<OptionStyledString> {
+        Vc::cell(Some(
             StyledString::Line(
                 self.messages
                     .iter()
                     .map(|v| StyledString::Text(format!("{}\n", v).into()))
                     .collect::<Vec<StyledString>>(),
             )
-            .cell(),
-        )))
+            .resolved_cell(),
+        ))
     }
 }

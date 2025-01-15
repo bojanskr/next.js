@@ -22,50 +22,18 @@
         : (obj[key] = value);
       return obj;
     }
-    function printToConsole(methodName, args, badgeName) {
-      var offset = 0;
-      switch (methodName) {
-        case "dir":
-        case "dirxml":
-        case "groupEnd":
-        case "table":
-          console[methodName].apply(console, args);
-          return;
-        case "assert":
-          offset = 1;
-      }
-      args = args.slice(0);
-      "string" === typeof args[offset]
-        ? args.splice(
-            offset,
-            1,
-            "\u001b[0m\u001b[7m%c%s\u001b[0m%c " + args[offset],
-            "background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px",
-            " " + badgeName + " ",
-            ""
-          )
-        : args.splice(
-            offset,
-            0,
-            "\u001b[0m\u001b[7m%c%s\u001b[0m%c ",
-            "background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px",
-            " " + badgeName + " ",
-            ""
-          );
-      console[methodName].apply(console, args);
-    }
     function resolveClientReference(bundlerConfig, metadata) {
       if (bundlerConfig) {
         var moduleExports = bundlerConfig[metadata[0]];
-        if ((bundlerConfig = moduleExports[metadata[2]]))
+        if ((bundlerConfig = moduleExports && moduleExports[metadata[2]]))
           moduleExports = bundlerConfig.name;
         else {
-          bundlerConfig = moduleExports["*"];
+          bundlerConfig = moduleExports && moduleExports["*"];
           if (!bundlerConfig)
             throw Error(
               'Could not find the module "' +
                 metadata[0] +
-                '" in the React SSR Manifest. This is probably a bug in the React Server Components bundler.'
+                '" in the React Server Consumer Manifest. This is probably a bug in the React Server Components bundler.'
             );
           moduleExports = metadata[2];
         }
@@ -74,6 +42,24 @@
           : [bundlerConfig.id, bundlerConfig.chunks, moduleExports];
       }
       return metadata;
+    }
+    function resolveServerReference(bundlerConfig, id) {
+      var name = "",
+        resolvedModuleData = bundlerConfig[id];
+      if (resolvedModuleData) name = resolvedModuleData.name;
+      else {
+        var idx = id.lastIndexOf("#");
+        -1 !== idx &&
+          ((name = id.slice(idx + 1)),
+          (resolvedModuleData = bundlerConfig[id.slice(0, idx)]));
+        if (!resolvedModuleData)
+          throw Error(
+            'Could not find the module "' +
+              id +
+              '" in the React Server Manifest. This is probably a bug in the React Server Components bundler.'
+          );
+      }
+      return [resolvedModuleData.id, resolvedModuleData.chunks, name];
     }
     function requireAsyncModule(id) {
       var promise = globalThis.__next_require__(id);
@@ -115,8 +101,22 @@
               return requireAsyncModule(metadata[0]);
             })
         : 0 < promises.length
-        ? Promise.all(promises)
-        : null;
+          ? Promise.all(promises)
+          : null;
+    }
+    function requireModule(metadata) {
+      var moduleExports = globalThis.__next_require__(metadata[0]);
+      if (4 === metadata.length && "function" === typeof moduleExports.then)
+        if ("fulfilled" === moduleExports.status)
+          moduleExports = moduleExports.value;
+        else throw moduleExports.reason;
+      return "*" === metadata[2]
+        ? moduleExports
+        : "" === metadata[2]
+          ? moduleExports.__esModule
+            ? moduleExports.default
+            : moduleExports
+          : moduleExports[metadata[2]];
     }
     function prepareDestinationWithChunks(
       moduleLoading,
@@ -142,24 +142,6 @@
             { crossOrigin: JSCompiler_inline_result, nonce: nonce }
           );
         }
-    }
-    function error$jscomp$0(format) {
-      for (
-        var _len2 = arguments.length,
-          args = Array(1 < _len2 ? _len2 - 1 : 0),
-          _key2 = 1;
-        _key2 < _len2;
-        _key2++
-      )
-        args[_key2 - 1] = arguments[_key2];
-      _len2 = format;
-      _key2 = Error("react-stack-top-frame");
-      !supportsCreateTask$1 &&
-        ReactSharedInternals.getCurrentStack &&
-        ((_key2 = ReactSharedInternals.getCurrentStack(_key2)),
-        "" !== _key2 && ((_len2 += "%s"), (args = args.concat([_key2]))));
-      args.unshift(_len2);
-      Function.prototype.apply.call(console.error, console, args);
     }
     function getIteratorFn(maybeIterable) {
       if (null === maybeIterable || "object" !== typeof maybeIterable)
@@ -224,8 +206,8 @@
           return value.$$typeof === CLIENT_REFERENCE_TAG
             ? "client"
             : (value = value.displayName || value.name)
-            ? "function " + value
-            : "function";
+              ? "function " + value
+              : "function";
         default:
           return String(value);
       }
@@ -237,6 +219,8 @@
           return "Suspense";
         case REACT_SUSPENSE_LIST_TYPE:
           return "SuspenseList";
+        case REACT_VIEW_TRANSITION_TYPE:
+          return "ViewTransition";
       }
       if ("object" === typeof type)
         switch (type.$$typeof) {
@@ -268,8 +252,8 @@
               "string" === typeof value
                 ? value
                 : "object" === typeof value && null !== value
-                ? "{" + describeObjectForErrorMessage(value) + "}"
-                : "{" + describeValueForErrorMessage(value) + "}";
+                  ? "{" + describeObjectForErrorMessage(value) + "}"
+                  : "{" + describeValueForErrorMessage(value) + "}";
             "" + i === expandedName
               ? ((start = objKind.length),
                 (length = value.length),
@@ -355,9 +339,9 @@
       return void 0 === expandedName
         ? objKind
         : -1 < start && 0 < length
-        ? ((objectOrArray = " ".repeat(start) + "^".repeat(length)),
-          "\n  " + objKind + "\n  " + objectOrArray)
-        : "\n  " + objKind;
+          ? ((objectOrArray = " ".repeat(start) + "^".repeat(length)),
+            "\n  " + objKind + "\n  " + objectOrArray)
+          : "\n  " + objKind;
     }
     function serializeNumber(number) {
       return Number.isFinite(number)
@@ -365,10 +349,10 @@
           ? "$-0"
           : number
         : Infinity === number
-        ? "$Infinity"
-        : -Infinity === number
-        ? "$-Infinity"
-        : "$NaN";
+          ? "$Infinity"
+          : -Infinity === number
+            ? "$-Infinity"
+            : "$NaN";
     }
     function processReply(
       root,
@@ -481,12 +465,12 @@
           originalValue === value ||
           originalValue instanceof Date ||
           ("Object" !== objectName(originalValue)
-            ? error$jscomp$0(
+            ? console.error(
                 "Only plain objects can be passed to Server Functions from the Client. %s objects are not supported.%s",
                 objectName(originalValue),
                 describeObjectForErrorMessage(this, key)
               )
-            : error$jscomp$0(
+            : console.error(
                 "Only plain objects can be passed to Server Functions from the Client. Objects with toJSON methods are not supported. Convert it manually to a simple value before passing it to props.%s",
                 describeObjectForErrorMessage(this, key)
               ));
@@ -669,34 +653,35 @@
           ) {
             if (void 0 === temporaryReferences)
               throw Error(
-                "Only plain objects, and a few built-ins, can be passed to Server Actions. Classes or null prototypes are not supported."
+                "Only plain objects, and a few built-ins, can be passed to Server Functions. Classes or null prototypes are not supported." +
+                  describeObjectForErrorMessage(this, key)
               );
             return "$T";
           }
           value.$$typeof === REACT_CONTEXT_TYPE
-            ? error$jscomp$0(
+            ? console.error(
                 "React Context Providers cannot be passed to Server Functions from the Client.%s",
                 describeObjectForErrorMessage(this, key)
               )
             : "Object" !== objectName(value)
-            ? error$jscomp$0(
-                "Only plain objects can be passed to Server Functions from the Client. %s objects are not supported.%s",
-                objectName(value),
-                describeObjectForErrorMessage(this, key)
-              )
-            : isSimpleObject(value)
-            ? Object.getOwnPropertySymbols &&
-              ((parentReference = Object.getOwnPropertySymbols(value)),
-              0 < parentReference.length &&
-                error$jscomp$0(
-                  "Only plain objects can be passed to Server Functions from the Client. Objects with symbol properties like %s are not supported.%s",
-                  parentReference[0].description,
+              ? console.error(
+                  "Only plain objects can be passed to Server Functions from the Client. %s objects are not supported.%s",
+                  objectName(value),
                   describeObjectForErrorMessage(this, key)
-                ))
-            : error$jscomp$0(
-                "Only plain objects can be passed to Server Functions from the Client. Classes or other objects with methods are not supported.%s",
-                describeObjectForErrorMessage(this, key)
-              );
+                )
+              : isSimpleObject(value)
+                ? Object.getOwnPropertySymbols &&
+                  ((parentReference = Object.getOwnPropertySymbols(value)),
+                  0 < parentReference.length &&
+                    console.error(
+                      "Only plain objects can be passed to Server Functions from the Client. Objects with symbol properties like %s are not supported.%s",
+                      parentReference[0].description,
+                      describeObjectForErrorMessage(this, key)
+                    ))
+                : console.error(
+                    "Only plain objects can be passed to Server Functions from the Client. Classes or other objects with methods are not supported.%s",
+                    describeObjectForErrorMessage(this, key)
+                  );
           return value;
         }
         if ("string" === typeof value) {
@@ -766,12 +751,17 @@
         pendingParts = 0,
         formData = null,
         writtenObjects = new WeakMap(),
-        modelRoot = root;
-      root = serializeModel(root, 0);
+        modelRoot = root,
+        json = serializeModel(root, 0);
       null === formData
-        ? resolve(root)
-        : (formData.set(formFieldPrefix + "0", root),
+        ? resolve(json)
+        : (formData.set(formFieldPrefix + "0", json),
           0 === pendingParts && resolve(formData));
+      return function () {
+        0 < pendingParts &&
+          ((pendingParts = 0),
+          null === formData ? resolve(json) : resolve(formData));
+      };
     }
     function encodeFormData(reference) {
       var resolve,
@@ -864,6 +854,49 @@
           );
       }
     }
+    function createFakeServerFunction(
+      name,
+      filename,
+      sourceMap,
+      line,
+      col,
+      environmentName,
+      innerFunction
+    ) {
+      name || (name = "<anonymous>");
+      var encodedName = JSON.stringify(name);
+      1 >= line
+        ? ((line = encodedName.length + 7),
+          (col =
+            "s=>({" +
+            encodedName +
+            " ".repeat(col < line ? 0 : col - line) +
+            ":(...args) => s(...args)})\n/* This module is a proxy to a Server Action. Turn on Source Maps to see the server source. */"))
+        : (col =
+            "/* This module is a proxy to a Server Action. Turn on Source Maps to see the server source. */" +
+            "\n".repeat(line - 2) +
+            "server=>({" +
+            encodedName +
+            ":\n" +
+            " ".repeat(1 > col ? 0 : col - 1) +
+            "(...args) => server(...args)})");
+      filename.startsWith("/") && (filename = "file://" + filename);
+      sourceMap
+        ? ((col +=
+            "\n//# sourceURL=rsc://React/" +
+            encodeURIComponent(environmentName) +
+            "/" +
+            filename +
+            "?s" +
+            fakeServerFunctionIdx++),
+          (col += "\n//# sourceMappingURL=" + sourceMap))
+        : filename && (col += "\n//# sourceURL=" + filename);
+      try {
+        return (0, eval)(col)(innerFunction)[name];
+      } catch (x) {
+        return innerFunction;
+      }
+    }
     function registerServerReference(
       proxy,
       reference$jscomp$0,
@@ -895,7 +928,7 @@
         reference = knownServerReferences.get(this);
       if (reference) {
         null != arguments[0] &&
-          error$jscomp$0(
+          console.error(
             'Cannot bind "this" of a Server Action. Pass null or undefined as the first argument to .bind().'
           );
         var args = ArraySlice.call(arguments, 1),
@@ -918,13 +951,117 @@
       }
       return newFn;
     }
-    function createServerReference$1(id, callServer, encodeFormAction) {
-      function proxy() {
+    function createBoundServerReference(
+      metaData,
+      callServer,
+      encodeFormAction,
+      findSourceMapURL
+    ) {
+      function action() {
+        var args = Array.prototype.slice.call(arguments);
+        return bound
+          ? "fulfilled" === bound.status
+            ? callServer(id, bound.value.concat(args))
+            : Promise.resolve(bound).then(function (boundArgs) {
+                return callServer(id, boundArgs.concat(args));
+              })
+          : callServer(id, args);
+      }
+      var id = metaData.id,
+        bound = metaData.bound,
+        location = metaData.location;
+      if (location) {
+        var functionName = metaData.name || "",
+          filename = location[1],
+          line = location[2];
+        location = location[3];
+        metaData = metaData.env || "Server";
+        findSourceMapURL =
+          null == findSourceMapURL
+            ? null
+            : findSourceMapURL(filename, metaData);
+        action = createFakeServerFunction(
+          functionName,
+          filename,
+          findSourceMapURL,
+          line,
+          location,
+          metaData,
+          action
+        );
+      }
+      registerServerReference(
+        action,
+        { id: id, bound: bound },
+        encodeFormAction
+      );
+      return action;
+    }
+    function parseStackLocation(error) {
+      error = error.stack;
+      error.startsWith("Error: react-stack-top-frame\n") &&
+        (error = error.slice(29));
+      var endOfFirst = error.indexOf("\n");
+      if (-1 !== endOfFirst) {
+        var endOfSecond = error.indexOf("\n", endOfFirst + 1);
+        endOfFirst =
+          -1 === endOfSecond
+            ? error.slice(endOfFirst + 1)
+            : error.slice(endOfFirst + 1, endOfSecond);
+      } else endOfFirst = error;
+      error = v8FrameRegExp.exec(endOfFirst);
+      if (
+        !error &&
+        ((error = jscSpiderMonkeyFrameRegExp.exec(endOfFirst)), !error)
+      )
+        return null;
+      endOfFirst = error[1] || "";
+      "<anonymous>" === endOfFirst && (endOfFirst = "");
+      endOfSecond = error[2] || error[5] || "";
+      "<anonymous>" === endOfSecond && (endOfSecond = "");
+      return [
+        endOfFirst,
+        endOfSecond,
+        +(error[3] || error[6]),
+        +(error[4] || error[7])
+      ];
+    }
+    function createServerReference$1(
+      id,
+      callServer,
+      encodeFormAction,
+      findSourceMapURL,
+      functionName
+    ) {
+      function action() {
         var args = Array.prototype.slice.call(arguments);
         return callServer(id, args);
       }
-      registerServerReference(proxy, { id: id, bound: null }, encodeFormAction);
-      return proxy;
+      var location = parseStackLocation(Error("react-stack-top-frame"));
+      if (null !== location) {
+        var filename = location[1],
+          line = location[2];
+        location = location[3];
+        findSourceMapURL =
+          null == findSourceMapURL
+            ? null
+            : findSourceMapURL(filename, "Client");
+        action = createFakeServerFunction(
+          functionName || "",
+          filename,
+          findSourceMapURL,
+          line,
+          location,
+          "Client",
+          action
+        );
+      }
+      registerServerReference(
+        action,
+        { id: id, bound: null },
+        encodeFormAction
+      );
+      return action;
     }
     function getComponentNameFromType(type) {
       if (null == type) return null;
@@ -946,11 +1083,13 @@
           return "Suspense";
         case REACT_SUSPENSE_LIST_TYPE:
           return "SuspenseList";
+        case REACT_VIEW_TRANSITION_TYPE:
+          return "ViewTransition";
       }
       if ("object" === typeof type)
         switch (
           ("number" === typeof type.tag &&
-            error$jscomp$0(
+            console.error(
               "Received an unexpected object in getComponentNameFromType(). This is likely a bug in React. Please file an issue."
             ),
           type.$$typeof)
@@ -982,11 +1121,18 @@
         }
       return null;
     }
-    function Chunk(status, value, reason, response) {
+    function prepareStackTrace(error, structuredStackTrace) {
+      error = (error.name || "Error") + ": " + (error.message || "");
+      for (var i = 0; i < structuredStackTrace.length; i++)
+        error += "\n    at " + structuredStackTrace[i].toString();
+      return error;
+    }
+    function ReactPromise(status, value, reason, response) {
       this.status = status;
       this.value = value;
       this.reason = reason;
       this._response = response;
+      this._children = [];
       this._debugInfo = null;
     }
     function readChunk(chunk) {
@@ -1008,7 +1154,10 @@
       }
     }
     function createPendingChunk(response) {
-      return new Chunk("pending", null, null, response);
+      return new ReactPromise("pending", null, null, response);
+    }
+    function createErrorChunk(response, error) {
+      return new ReactPromise("rejected", null, error, response);
     }
     function wakeChunk(listeners, value) {
       for (var i = 0; i < listeners.length; i++) (0, listeners[i])(value);
@@ -1049,7 +1198,7 @@
       }
     }
     function createResolvedIteratorResultChunk(response, value, done) {
-      return new Chunk(
+      return new ReactPromise(
         "resolved_model",
         (done ? '{"done":true,"value":' : '{"done":false,"value":') +
           value +
@@ -1090,12 +1239,14 @@
       }
     }
     function initializeModelChunk(chunk) {
-      var prevHandler = initializingHandler;
+      var prevHandler = initializingHandler,
+        prevChunk = initializingChunk;
       initializingHandler = null;
       var resolvedModel = chunk.value;
       chunk.status = "blocked";
       chunk.value = null;
       chunk.reason = null;
+      initializingChunk = chunk;
       try {
         var value = JSON.parse(resolvedModel, chunk._response._fromJSON),
           resolveListeners = chunk.value;
@@ -1113,38 +1264,36 @@
         }
         chunk.status = "fulfilled";
         chunk.value = value;
-      } catch (error$1) {
-        (chunk.status = "rejected"), (chunk.reason = error$1);
+      } catch (error) {
+        (chunk.status = "rejected"), (chunk.reason = error);
       } finally {
-        initializingHandler = prevHandler;
+        (initializingHandler = prevHandler), (initializingChunk = prevChunk);
       }
     }
     function initializeModuleChunk(chunk) {
       try {
-        var metadata = chunk.value,
-          moduleExports = globalThis.__next_require__(metadata[0]);
-        if (4 === metadata.length && "function" === typeof moduleExports.then)
-          if ("fulfilled" === moduleExports.status)
-            moduleExports = moduleExports.value;
-          else throw moduleExports.reason;
-        var value =
-          "*" === metadata[2]
-            ? moduleExports
-            : "" === metadata[2]
-            ? moduleExports.__esModule
-              ? moduleExports.default
-              : moduleExports
-            : moduleExports[metadata[2]];
+        var value = requireModule(chunk.value);
         chunk.status = "fulfilled";
         chunk.value = value;
-      } catch (error$2) {
-        (chunk.status = "rejected"), (chunk.reason = error$2);
+      } catch (error) {
+        (chunk.status = "rejected"), (chunk.reason = error);
       }
     }
     function reportGlobalError(response, error) {
+      response._closed = !0;
+      response._closedReason = error;
       response._chunks.forEach(function (chunk) {
         "pending" === chunk.status && triggerErrorOnChunk(chunk, error);
       });
+      supportsUserTiming &&
+        performance.mark("Server Components Track", componentsTrackMarker);
+      flushComponentPerformance(
+        response,
+        getChunk(response, 0),
+        0,
+        -Infinity,
+        -Infinity
+      );
     }
     function nullRefGetter() {
       return null;
@@ -1178,7 +1327,11 @@
     function getChunk(response, id) {
       var chunks = response._chunks,
         chunk = chunks.get(id);
-      chunk || ((chunk = createPendingChunk(response)), chunks.set(id, chunk));
+      chunk ||
+        ((chunk = response._closed
+          ? createErrorChunk(response, response._closedReason)
+          : createPendingChunk(response)),
+        chunks.set(id, chunk));
       return chunk;
     }
     function waitForReference(
@@ -1202,10 +1355,22 @@
             }
           value = value[path[i]];
         }
-        parentObject[key] = map(response, value);
-        "" === key &&
-          null === handler.value &&
-          (handler.value = parentObject[key]);
+        i = map(response, value, parentObject, key);
+        parentObject[key] = i;
+        "" === key && null === handler.value && (handler.value = i);
+        if (
+          parentObject[0] === REACT_ELEMENT_TYPE &&
+          "object" === typeof handler.value &&
+          null !== handler.value &&
+          handler.value.$$typeof === REACT_ELEMENT_TYPE
+        )
+          switch (((value = handler.value), key)) {
+            case "3":
+              value.props = i;
+              break;
+            case "4":
+              value._owner = i;
+          }
         handler.deps--;
         0 === handler.deps &&
           ((i = handler.chunk),
@@ -1232,8 +1397,9 @@
                 name: getComponentNameFromType(blockedValue.type) || "",
                 owner: blockedValue._owner
               };
-              erroredComponent.stack = blockedValue._debugStack;
-              erroredComponent.task = blockedValue._debugTask;
+              erroredComponent.debugStack = blockedValue._debugStack;
+              supportsCreateTask &&
+                (erroredComponent.debugTask = blockedValue._debugTask);
               (chunk._debugInfo || (chunk._debugInfo = [])).push(
                 erroredComponent
               );
@@ -1256,26 +1422,105 @@
       referencedChunk.then(fulfill, reject);
       return null;
     }
-    function createServerReferenceProxy(response, metaData) {
-      function proxy() {
-        var args = Array.prototype.slice.call(arguments),
-          p = metaData.bound;
-        return p
-          ? "fulfilled" === p.status
-            ? callServer(metaData.id, p.value.concat(args))
-            : Promise.resolve(p).then(function (bound) {
-                return callServer(metaData.id, bound.concat(args));
-              })
-          : callServer(metaData.id, args);
-      }
-      var callServer = response._callServer;
-      registerServerReference(proxy, metaData, response._encodeFormAction);
-      return proxy;
+    function loadServerReference(response, metaData, parentObject, key) {
+      if (!response._serverReferenceConfig)
+        return createBoundServerReference(
+          metaData,
+          response._callServer,
+          response._encodeFormAction,
+          response._debugFindSourceMapURL
+        );
+      var serverReference = resolveServerReference(
+        response._serverReferenceConfig,
+        metaData.id
+      );
+      if ((response = preloadModule(serverReference)))
+        metaData.bound && (response = Promise.all([response, metaData.bound]));
+      else if (metaData.bound) response = Promise.resolve(metaData.bound);
+      else return requireModule(serverReference);
+      if (initializingHandler) {
+        var handler = initializingHandler;
+        handler.deps++;
+      } else
+        handler = initializingHandler = {
+          parent: null,
+          chunk: null,
+          value: null,
+          deps: 1,
+          errored: !1
+        };
+      response.then(
+        function () {
+          var resolvedValue = requireModule(serverReference);
+          if (metaData.bound) {
+            var boundArgs = metaData.bound.value.slice(0);
+            boundArgs.unshift(null);
+            resolvedValue = resolvedValue.bind.apply(resolvedValue, boundArgs);
+          }
+          parentObject[key] = resolvedValue;
+          "" === key &&
+            null === handler.value &&
+            (handler.value = resolvedValue);
+          if (
+            parentObject[0] === REACT_ELEMENT_TYPE &&
+            "object" === typeof handler.value &&
+            null !== handler.value &&
+            handler.value.$$typeof === REACT_ELEMENT_TYPE
+          )
+            switch (((boundArgs = handler.value), key)) {
+              case "3":
+                boundArgs.props = resolvedValue;
+                break;
+              case "4":
+                boundArgs._owner = resolvedValue;
+            }
+          handler.deps--;
+          0 === handler.deps &&
+            ((resolvedValue = handler.chunk),
+            null !== resolvedValue &&
+              "blocked" === resolvedValue.status &&
+              ((boundArgs = resolvedValue.value),
+              (resolvedValue.status = "fulfilled"),
+              (resolvedValue.value = handler.value),
+              null !== boundArgs && wakeChunk(boundArgs, handler.value)));
+        },
+        function (error) {
+          if (!handler.errored) {
+            var blockedValue = handler.value;
+            handler.errored = !0;
+            handler.value = error;
+            var chunk = handler.chunk;
+            if (null !== chunk && "blocked" === chunk.status) {
+              if (
+                "object" === typeof blockedValue &&
+                null !== blockedValue &&
+                blockedValue.$$typeof === REACT_ELEMENT_TYPE
+              ) {
+                var erroredComponent = {
+                  name: getComponentNameFromType(blockedValue.type) || "",
+                  owner: blockedValue._owner
+                };
+                erroredComponent.debugStack = blockedValue._debugStack;
+                supportsCreateTask &&
+                  (erroredComponent.debugTask = blockedValue._debugTask);
+                (chunk._debugInfo || (chunk._debugInfo = [])).push(
+                  erroredComponent
+                );
+              }
+              triggerErrorOnChunk(chunk, error);
+            }
+          }
+        }
+      );
+      return null;
     }
     function getOutlinedModel(response, reference, parentObject, key, map) {
       reference = reference.split(":");
       var id = parseInt(reference[0], 16);
       id = getChunk(response, id);
+      null !== initializingChunk &&
+        isArrayImpl(initializingChunk._children) &&
+        initializingChunk._children.push(id);
       switch (id.status) {
         case "resolved_model":
           initializeModelChunk(id);
@@ -1285,10 +1530,22 @@
       }
       switch (id.status) {
         case "fulfilled":
-          parentObject = id.value;
-          for (key = 1; key < reference.length; key++)
-            parentObject = parentObject[reference[key]];
-          response = map(response, parentObject);
+          for (var value = id.value, i = 1; i < reference.length; i++) {
+            for (; value.$$typeof === REACT_LAZY_TYPE; )
+              if (((value = value._payload), "fulfilled" === value.status))
+                value = value.value;
+              else
+                return waitForReference(
+                  value,
+                  parentObject,
+                  key,
+                  response,
+                  map,
+                  reference.slice(i - 1)
+                );
+            value = value[reference[i]];
+          }
+          response = map(response, value, parentObject, key);
           id._debugInfo &&
             ("object" !== typeof response ||
               null === response ||
@@ -1372,12 +1629,19 @@
             return (
               (parentObject = parseInt(value.slice(2), 16)),
               (response = getChunk(response, parentObject)),
+              null !== initializingChunk &&
+                isArrayImpl(initializingChunk._children) &&
+                initializingChunk._children.push(response),
               createLazyChunkWrapper(response)
             );
           case "@":
             if (2 === value.length) return new Promise(function () {});
             parentObject = parseInt(value.slice(2), 16);
-            return getChunk(response, parentObject);
+            response = getChunk(response, parentObject);
+            null !== initializingChunk &&
+              isArrayImpl(initializingChunk._children) &&
+              initializingChunk._children.push(response);
+            return response;
           case "S":
             return Symbol.for(value.slice(2));
           case "F":
@@ -1388,7 +1652,7 @@
                 value,
                 parentObject,
                 key,
-                createServerReferenceProxy
+                loadServerReference
               )
             );
           case "T":
@@ -1425,6 +1689,17 @@
                 createFormData
               )
             );
+          case "Z":
+            return (
+              (value = value.slice(2)),
+              getOutlinedModel(
+                response,
+                value,
+                parentObject,
+                key,
+                resolveErrorDev
+              )
+            );
           case "i":
             return (
               (value = value.slice(2)),
@@ -1454,6 +1729,17 @@
             } catch (x) {
               return function () {};
             }
+          case "Y":
+            return (
+              Object.defineProperty(parentObject, key, {
+                get: function () {
+                  return "This object has been omitted by React in the console log to avoid sending too much data from the server. Try logging smaller or more specific objects.";
+                },
+                enumerable: !0,
+                configurable: !1
+              }),
+              null
+            );
           default:
             return (
               (value = value.slice(1)),
@@ -1470,15 +1756,19 @@
     }
     function ResponseInstance(
       bundlerConfig,
+      serverReferenceConfig,
       moduleLoading,
       callServer,
       encodeFormAction,
       nonce,
       temporaryReferences,
-      findSourceMapURL
+      findSourceMapURL,
+      replayConsole,
+      environmentName
     ) {
       var chunks = new Map();
       this._bundlerConfig = bundlerConfig;
+      this._serverReferenceConfig = serverReferenceConfig;
       this._moduleLoading = moduleLoading;
       this._callServer = void 0 !== callServer ? callServer : missingCall;
       this._encodeFormAction = encodeFormAction;
@@ -1488,18 +1778,50 @@
       this._fromJSON = null;
       this._rowLength = this._rowTag = this._rowID = this._rowState = 0;
       this._buffer = [];
+      this._closed = !1;
+      this._closedReason = null;
       this._tempRefs = temporaryReferences;
+      this._timeOrigin = 0;
+      this._debugRootOwner = bundlerConfig =
+        void 0 === ReactSharedInteralsServer ||
+        null === ReactSharedInteralsServer.A
+          ? null
+          : ReactSharedInteralsServer.A.getOwner();
+      this._debugRootStack =
+        null !== bundlerConfig ? Error("react-stack-top-frame") : null;
+      environmentName = void 0 === environmentName ? "Server" : environmentName;
       supportsCreateTask &&
-        (this._debugRootTask = console.createTask('"use server"'));
+        (this._debugRootTask = console.createTask(
+          '"use ' + environmentName.toLowerCase() + '"'
+        ));
       this._debugFindSourceMapURL = findSourceMapURL;
+      this._replayConsole = replayConsole;
+      this._rootEnvironmentName = environmentName;
       this._fromJSON = createFromJSONCallback(this);
+    }
+    function resolveModel(response, id, model) {
+      var chunks = response._chunks,
+        chunk = chunks.get(id);
+      chunk
+        ? resolveModelChunk(chunk, model)
+        : chunks.set(
+            id,
+            new ReactPromise("resolved_model", model, null, response)
+          );
+    }
+    function resolveText(response, id, text) {
+      var chunks = response._chunks,
+        chunk = chunks.get(id);
+      chunk && "pending" !== chunk.status
+        ? chunk.reason.enqueueValue(text)
+        : chunks.set(id, new ReactPromise("fulfilled", text, null, response));
     }
     function resolveBuffer(response, id, buffer) {
       var chunks = response._chunks,
         chunk = chunks.get(id);
       chunk && "pending" !== chunk.status
         ? chunk.reason.enqueueValue(buffer)
-        : chunks.set(id, new Chunk("fulfilled", buffer, null, response));
+        : chunks.set(id, new ReactPromise("fulfilled", buffer, null, response));
     }
     function resolveModule(response, id, model) {
       var chunks = response._chunks,
@@ -1519,7 +1841,7 @@
           var blockedChunk = chunk;
           blockedChunk.status = "blocked";
         } else
-          (blockedChunk = new Chunk("blocked", null, null, response)),
+          (blockedChunk = new ReactPromise("blocked", null, null, response)),
             chunks.set(id, blockedChunk);
         model.then(
           function () {
@@ -1534,7 +1856,12 @@
           ? resolveModuleChunk(chunk, clientReference)
           : chunks.set(
               id,
-              new Chunk("resolved_module", clientReference, null, response)
+              new ReactPromise(
+                "resolved_module",
+                clientReference,
+                null,
+                response
+              )
             );
     }
     function resolveStream(response, id, stream, controller) {
@@ -1547,7 +1874,10 @@
           (chunk.value = stream),
           (chunk.reason = controller),
           null !== response && wakeChunk(response, chunk.value))
-        : chunks.set(id, new Chunk("fulfilled", stream, controller, response));
+        : chunks.set(
+            id,
+            new ReactPromise("fulfilled", stream, controller, response)
+          );
     }
     function startReadableStream(response, id, type) {
       var controller = null;
@@ -1568,7 +1898,12 @@
         },
         enqueueModel: function (json) {
           if (null === previousBlockedChunk) {
-            var chunk = new Chunk("resolved_model", json, null, response);
+            var chunk = new ReactPromise(
+              "resolved_model",
+              json,
+              null,
+              response
+            );
             initializeModelChunk(chunk);
             "fulfilled" === chunk.status
               ? controller.enqueue(chunk.value)
@@ -1642,7 +1977,7 @@
               );
             if (nextReadIndex === buffer.length) {
               if (closed)
-                return new Chunk(
+                return new ReactPromise(
                   "fulfilled",
                   { done: !0, value: void 0 },
                   null,
@@ -1660,7 +1995,7 @@
         {
           enqueueValue: function (value) {
             if (nextWriteIndex === buffer.length)
-              buffer[nextWriteIndex] = new Chunk(
+              buffer[nextWriteIndex] = new ReactPromise(
                 "fulfilled",
                 { done: !1, value: value },
                 null,
@@ -1720,79 +2055,320 @@
         }
       );
     }
-    function createFakeFunction(name, filename, sourceMap, line, col) {
-      line =
-        1 >= line
-          ? "_=>" +
-            " ".repeat(4 > col ? 0 : col - 4) +
-            "_()\n/* This module was rendered by a Server Component. Turn on Source Maps to see the server source. */"
-          : "/* This module was rendered by a Server Component. Turn on Source Maps to see the server source. */" +
+    function stopStream(response, id, row) {
+      (response = response._chunks.get(id)) &&
+        "fulfilled" === response.status &&
+        response.reason.close("" === row ? '"$undefined"' : row);
+    }
+    function resolveErrorDev(response, errorInfo) {
+      var env = errorInfo.env;
+      errorInfo = buildFakeCallStack(
+        response,
+        errorInfo.stack,
+        env,
+        Error.bind(
+          null,
+          errorInfo.message ||
+            "An error occurred in the Server Components render but no message was provided"
+        )
+      );
+      response = getRootTask(response, env);
+      response = null != response ? response.run(errorInfo) : errorInfo();
+      response.environmentName = env;
+      return response;
+    }
+    function resolvePostponeDev(response, id, reason, stack, env) {
+      reason = buildFakeCallStack(
+        response,
+        stack,
+        env,
+        Error.bind(null, reason || "")
+      );
+      stack = response._debugRootTask;
+      reason = null != stack ? stack.run(reason) : reason();
+      reason.$$typeof = REACT_POSTPONE_TYPE;
+      stack = response._chunks;
+      (env = stack.get(id))
+        ? triggerErrorOnChunk(env, reason)
+        : stack.set(id, createErrorChunk(response, reason));
+    }
+    function resolveHint(response, code, model) {
+      response = JSON.parse(model, response._fromJSON);
+      model = ReactDOMSharedInternals.d;
+      switch (code) {
+        case "D":
+          model.D(response);
+          break;
+        case "C":
+          "string" === typeof response
+            ? model.C(response)
+            : model.C(response[0], response[1]);
+          break;
+        case "L":
+          code = response[0];
+          var as = response[1];
+          3 === response.length
+            ? model.L(code, as, response[2])
+            : model.L(code, as);
+          break;
+        case "m":
+          "string" === typeof response
+            ? model.m(response)
+            : model.m(response[0], response[1]);
+          break;
+        case "X":
+          "string" === typeof response
+            ? model.X(response)
+            : model.X(response[0], response[1]);
+          break;
+        case "S":
+          "string" === typeof response
+            ? model.S(response)
+            : model.S(
+                response[0],
+                0 === response[1] ? void 0 : response[1],
+                3 === response.length ? response[2] : void 0
+              );
+          break;
+        case "M":
+          "string" === typeof response
+            ? model.M(response)
+            : model.M(response[0], response[1]);
+      }
+    }
+    function createFakeFunction(
+      name,
+      filename,
+      sourceMap,
+      line,
+      col,
+      environmentName
+    ) {
+      name || (name = "<anonymous>");
+      var encodedName = JSON.stringify(name);
+      1 >= line
+        ? ((line = encodedName.length + 7),
+          (col =
+            "({" +
+            encodedName +
+            ":_=>" +
+            " ".repeat(col < line ? 0 : col - line) +
+            "_()})\n/* This module was rendered by a Server Component. Turn on Source Maps to see the server source. */"))
+        : (col =
+            "/* This module was rendered by a Server Component. Turn on Source Maps to see the server source. */" +
             "\n".repeat(line - 2) +
-            "_=>\n" +
+            "({" +
+            encodedName +
+            ":_=>\n" +
             " ".repeat(1 > col ? 0 : col - 1) +
-            "_()";
+            "_()})");
       filename.startsWith("/") && (filename = "file://" + filename);
       sourceMap
-        ? ((line +=
+        ? ((col +=
             "\n//# sourceURL=rsc://React/" +
-            filename +
+            encodeURIComponent(environmentName) +
+            "/" +
+            encodeURI(filename) +
             "?" +
             fakeFunctionIdx++),
-          (line += "\n//# sourceMappingURL=" + sourceMap))
-        : filename && (line += "\n//# sourceURL=" + filename);
+          (col += "\n//# sourceMappingURL=" + sourceMap))
+        : (col = filename
+            ? col + ("\n//# sourceURL=" + encodeURI(filename))
+            : col + "\n//# sourceURL=<anonymous>");
       try {
-        var fn = (0, eval)(line);
+        var fn = (0, eval)(col)[name];
       } catch (x) {
         fn = function (_) {
           return _();
         };
       }
-      Object.defineProperty(fn, "name", { value: name || "(anonymous)" });
-      fn.displayName = name;
       return fn;
     }
-    function buildFakeCallStack(response, stack, innerCall) {
-      stack = stack.split("\n");
+    function buildFakeCallStack(response, stack, environmentName, innerCall) {
       for (var i = 0; i < stack.length; i++) {
         var frame = stack[i],
-          fn = fakeFunctionCache.get(frame);
+          frameKey = frame.join("-") + "-" + environmentName,
+          fn = fakeFunctionCache.get(frameKey);
         if (void 0 === fn) {
-          var parsed = frameRegExp.exec(frame);
-          if (!parsed) continue;
-          fn = parsed[1] || "";
-          var filename = parsed[2] || parsed[5] || "",
-            line = +(parsed[3] || parsed[6]);
-          parsed = +(parsed[4] || parsed[7]);
-          var sourceMap = response._debugFindSourceMapURL
-            ? response._debugFindSourceMapURL(filename)
+          fn = frame[0];
+          var filename = frame[1],
+            line = frame[2];
+          frame = frame[3];
+          var findSourceMapURL = response._debugFindSourceMapURL;
+          findSourceMapURL = findSourceMapURL
+            ? findSourceMapURL(filename, environmentName)
             : null;
-          fn = createFakeFunction(fn, filename, sourceMap, line, parsed);
-          fakeFunctionCache.set(frame, fn);
+          fn = createFakeFunction(
+            fn,
+            filename,
+            findSourceMapURL,
+            line,
+            frame,
+            environmentName
+          );
+          fakeFunctionCache.set(frameKey, fn);
         }
         innerCall = fn.bind(null, innerCall);
       }
       return innerCall;
     }
-    function initializeFakeTask(response, debugInfo) {
-      if (!supportsCreateTask || "string" !== typeof debugInfo.stack)
-        return null;
+    function getRootTask(response, childEnvironmentName) {
+      var rootTask = response._debugRootTask;
+      return rootTask
+        ? response._rootEnvironmentName !== childEnvironmentName
+          ? ((response = console.createTask.bind(
+              console,
+              '"use ' + childEnvironmentName.toLowerCase() + '"'
+            )),
+            rootTask.run(response))
+          : rootTask
+        : null;
+    }
+    function initializeFakeTask(response, debugInfo, childEnvironmentName) {
+      if (!supportsCreateTask || null == debugInfo.stack) return null;
       var stack = debugInfo.stack,
-        cachedEntry = debugInfo.task;
-      if (void 0 !== cachedEntry) return cachedEntry;
-      cachedEntry =
+        env =
+          null == debugInfo.env ? response._rootEnvironmentName : debugInfo.env;
+      if (env !== childEnvironmentName)
+        return (
+          (debugInfo =
+            null == debugInfo.owner
+              ? null
+              : initializeFakeTask(response, debugInfo.owner, env)),
+          buildFakeTask(
+            response,
+            debugInfo,
+            stack,
+            '"use ' + childEnvironmentName.toLowerCase() + '"',
+            env
+          )
+        );
+      childEnvironmentName = debugInfo.debugTask;
+      if (void 0 !== childEnvironmentName) return childEnvironmentName;
+      childEnvironmentName =
         null == debugInfo.owner
           ? null
-          : initializeFakeTask(response, debugInfo.owner);
-      var createTaskFn = console.createTask.bind(
-        console,
-        "<" + (debugInfo.name || "...") + ">"
-      );
-      stack = buildFakeCallStack(response, stack, createTaskFn);
-      null === cachedEntry
-        ? ((response = response._debugRootTask),
-          (response = null != response ? response.run(stack) : stack()))
-        : (response = cachedEntry.run(stack));
-      return (debugInfo.task = response);
+          : initializeFakeTask(response, debugInfo.owner, env);
+      return (debugInfo.debugTask = buildFakeTask(
+        response,
+        childEnvironmentName,
+        stack,
+        "<" + (debugInfo.name || "...") + ">",
+        env
+      ));
+    }
+    function buildFakeTask(response, ownerTask, stack, taskName, env) {
+      taskName = console.createTask.bind(console, taskName);
+      stack = buildFakeCallStack(response, stack, env, taskName);
+      return null === ownerTask
+        ? ((response = getRootTask(response, env)),
+          null != response ? response.run(stack) : stack())
+        : ownerTask.run(stack);
+    }
+    function fakeJSXCallSite() {
+      return Error("react-stack-top-frame");
+    }
+    function initializeFakeStack(response, debugInfo) {
+      void 0 === debugInfo.debugStack &&
+        (null != debugInfo.stack &&
+          (debugInfo.debugStack = createFakeJSXCallStackInDEV(
+            response,
+            debugInfo.stack,
+            null == debugInfo.env ? "" : debugInfo.env
+          )),
+        null != debugInfo.owner &&
+          initializeFakeStack(response, debugInfo.owner));
+    }
+    function resolveDebugInfo(response, id, debugInfo) {
+      var env =
+        void 0 === debugInfo.env
+          ? response._rootEnvironmentName
+          : debugInfo.env;
+      void 0 !== debugInfo.stack &&
+        initializeFakeTask(response, debugInfo, env);
+      null === debugInfo.owner && null != response._debugRootOwner
+        ? ((env = debugInfo),
+          (env.owner = response._debugRootOwner),
+          (env.debugStack = response._debugRootStack))
+        : void 0 !== debugInfo.stack &&
+          initializeFakeStack(response, debugInfo);
+      "number" === typeof debugInfo.time &&
+        (debugInfo = { time: debugInfo.time + response._timeOrigin });
+      response = getChunk(response, id);
+      (response._debugInfo || (response._debugInfo = [])).push(debugInfo);
+    }
+    function getCurrentStackInDEV() {
+      var owner = currentOwnerInDEV;
+      if (null === owner) return "";
+      try {
+        var info = "";
+        if (owner.owner || "string" !== typeof owner.name) {
+          for (; owner; ) {
+            var ownerStack = owner.debugStack;
+            if (null != ownerStack) {
+              if ((owner = owner.owner)) {
+                var JSCompiler_temp_const = info;
+                var error = ownerStack,
+                  prevPrepareStackTrace = Error.prepareStackTrace;
+                Error.prepareStackTrace = prepareStackTrace;
+                var stack = error.stack;
+                Error.prepareStackTrace = prevPrepareStackTrace;
+                stack.startsWith("Error: react-stack-top-frame\n") &&
+                  (stack = stack.slice(29));
+                var idx = stack.indexOf("\n");
+                -1 !== idx && (stack = stack.slice(idx + 1));
+                idx = stack.indexOf("react-stack-bottom-frame");
+                -1 !== idx && (idx = stack.lastIndexOf("\n", idx));
+                var JSCompiler_inline_result =
+                  -1 !== idx ? (stack = stack.slice(0, idx)) : "";
+                info =
+                  JSCompiler_temp_const + ("\n" + JSCompiler_inline_result);
+              }
+            } else break;
+          }
+          var JSCompiler_inline_result$jscomp$0 = info;
+        } else {
+          JSCompiler_temp_const = owner.name;
+          if (void 0 === prefix)
+            try {
+              throw Error();
+            } catch (x) {
+              (prefix =
+                ((error = x.stack.trim().match(/\n( *(at )?)/)) && error[1]) ||
+                ""),
+                (suffix =
+                  -1 < x.stack.indexOf("\n    at")
+                    ? " (<anonymous>)"
+                    : -1 < x.stack.indexOf("@")
+                      ? "@unknown:0:0"
+                      : "");
+            }
+          JSCompiler_inline_result$jscomp$0 =
+            "\n" + prefix + JSCompiler_temp_const + suffix;
+        }
+      } catch (x) {
+        JSCompiler_inline_result$jscomp$0 =
+          "\nError generating stack: " + x.message + "\n" + x.stack;
+      }
+      return JSCompiler_inline_result$jscomp$0;
+    }
+    function resolveConsoleEntry(response, value) {
+      if (response._replayConsole) {
+        var payload = JSON.parse(value, response._fromJSON);
+        value = payload[0];
+        var stackTrace = payload[1],
+          owner = payload[2],
+          env = payload[3];
+        payload = payload.slice(4);
+        replayConsoleWithCallStackInDEV(
+          response,
+          value,
+          stackTrace,
+          owner,
+          env,
+          payload
+        );
+      }
     }
     function mergeBuffer(buffer, lastChunk) {
       for (
@@ -1829,7 +2405,177 @@
       );
       resolveBuffer(response, id, constructor);
     }
-    function processFullRow(response, id, tag, buffer, chunk) {
+    function flushComponentPerformance(
+      response,
+      root,
+      trackIdx$jscomp$0,
+      trackTime,
+      parentEndTime
+    ) {
+      if (!isArrayImpl(root._children)) {
+        response = root._children;
+        root = response.endTime;
+        if (
+          -Infinity < parentEndTime &&
+          parentEndTime < root &&
+          null !== response.component
+        ) {
+          var trackIdx = trackIdx$jscomp$0,
+            startTime = parentEndTime;
+          if (supportsUserTiming && 0 <= root && 10 > trackIdx) {
+            var name = response.component.name;
+            reusableComponentDevToolDetails.color = "tertiary-light";
+            reusableComponentDevToolDetails.track = trackNames[trackIdx];
+            reusableComponentOptions.start = 0 > startTime ? 0 : startTime;
+            reusableComponentOptions.end = root;
+            performance.measure(name + " [deduped]", reusableComponentOptions);
+          }
+        }
+        response.track = trackIdx$jscomp$0;
+        return response;
+      }
+      var children = root._children;
+      "resolved_model" === root.status && initializeModelChunk(root);
+      if ((trackIdx = root._debugInfo)) {
+        for (startTime = 1; startTime < trackIdx.length; startTime++)
+          if (
+            "string" === typeof trackIdx[startTime].name &&
+            ((name = trackIdx[startTime - 1]), "number" === typeof name.time)
+          ) {
+            startTime = name.time;
+            startTime < trackTime && trackIdx$jscomp$0++;
+            trackTime = startTime;
+            break;
+          }
+        for (startTime = trackIdx.length - 1; 0 <= startTime; startTime--)
+          (name = trackIdx[startTime]),
+            "number" === typeof name.time &&
+              name.time > parentEndTime &&
+              (parentEndTime = name.time);
+      }
+      startTime = {
+        track: trackIdx$jscomp$0,
+        endTime: -Infinity,
+        component: null
+      };
+      root._children = startTime;
+      name = -Infinity;
+      var childTrackIdx = trackIdx$jscomp$0,
+        childTrackTime = trackTime;
+      for (trackTime = 0; trackTime < children.length; trackTime++) {
+        childTrackTime = flushComponentPerformance(
+          response,
+          children[trackTime],
+          childTrackIdx,
+          childTrackTime,
+          parentEndTime
+        );
+        null !== childTrackTime.component &&
+          (startTime.component = childTrackTime.component);
+        childTrackIdx = childTrackTime.track;
+        var childEndTime = childTrackTime.endTime;
+        childTrackTime = childEndTime;
+        childEndTime > name && (name = childEndTime);
+      }
+      if (trackIdx)
+        for (
+          parentEndTime = 0, childTrackIdx = !0, children = trackIdx.length - 1;
+          0 <= children;
+          children--
+        )
+          if (
+            ((trackTime = trackIdx[children]),
+            "number" === typeof trackTime.time &&
+              ((parentEndTime = trackTime.time),
+              parentEndTime > name && (name = parentEndTime)),
+            "string" === typeof trackTime.name && 0 < children)
+          ) {
+            childTrackTime = trackIdx[children - 1];
+            if ("number" === typeof childTrackTime.time) {
+              childTrackTime = childTrackTime.time;
+              if (
+                childTrackIdx &&
+                "rejected" === root.status &&
+                root.reason !== response._closedReason
+              ) {
+                var componentInfo = trackTime;
+                childTrackIdx = trackIdx$jscomp$0;
+                childEndTime = name;
+                var rootEnv = response._rootEnvironmentName,
+                  error = root.reason;
+                if (supportsUserTiming) {
+                  var properties = [];
+                  properties.push([
+                    "Error",
+                    "object" === typeof error &&
+                    null !== error &&
+                    "string" === typeof error.message
+                      ? String(error.message)
+                      : String(error)
+                  ]);
+                  error = componentInfo.env;
+                  componentInfo = componentInfo.name;
+                  componentInfo =
+                    error === rootEnv || void 0 === error
+                      ? componentInfo
+                      : componentInfo + " [" + error + "]";
+                  performance.measure(componentInfo, {
+                    start: 0 > childTrackTime ? 0 : childTrackTime,
+                    end: childEndTime,
+                    detail: {
+                      devtools: {
+                        color: "error",
+                        track: trackNames[childTrackIdx],
+                        trackGroup: "Server Components \u269b",
+                        tooltipText: componentInfo + " Errored",
+                        properties: properties
+                      }
+                    }
+                  });
+                }
+              } else
+                (childTrackIdx = trackIdx$jscomp$0),
+                  (childEndTime = name),
+                  supportsUserTiming &&
+                    0 <= childEndTime &&
+                    10 > childTrackIdx &&
+                    ((properties = trackTime.env),
+                    (componentInfo = trackTime.name),
+                    (rootEnv = properties === response._rootEnvironmentName),
+                    (error = parentEndTime - childTrackTime),
+                    (reusableComponentDevToolDetails.color =
+                      0.5 > error
+                        ? rootEnv
+                          ? "primary-light"
+                          : "secondary-light"
+                        : 50 > error
+                          ? rootEnv
+                            ? "primary"
+                            : "secondary"
+                          : 500 > error
+                            ? rootEnv
+                              ? "primary-dark"
+                              : "secondary-dark"
+                            : "error"),
+                    (reusableComponentDevToolDetails.track =
+                      trackNames[childTrackIdx]),
+                    (reusableComponentOptions.start =
+                      0 > childTrackTime ? 0 : childTrackTime),
+                    (reusableComponentOptions.end = childEndTime),
+                    performance.measure(
+                      rootEnv || void 0 === properties
+                        ? componentInfo
+                        : componentInfo + " [" + properties + "]",
+                      reusableComponentOptions
+                    ));
+              startTime.component = trackTime;
+            }
+            childTrackIdx = !1;
+          }
+      startTime.endTime = name;
+      return startTime;
+    }
+    function processFullBinaryRow(response, id, tag, buffer, chunk) {
       switch (tag) {
         case 65:
           resolveBuffer(response, id, mergeBuffer(buffer, chunk).buffer);
@@ -1882,111 +2628,46 @@
       )
         row += stringDecoder.decode(buffer[i], decoderOptions);
       row += stringDecoder.decode(chunk);
+      processFullStringRow(response, id, tag, row);
+    }
+    function processFullStringRow(response, id, tag, row) {
       switch (tag) {
         case 73:
           resolveModule(response, id, row);
           break;
         case 72:
-          id = row[0];
-          row = row.slice(1);
-          response = JSON.parse(row, response._fromJSON);
-          row = ReactDOMSharedInternals.d;
-          switch (id) {
-            case "D":
-              row.D(response);
-              break;
-            case "C":
-              "string" === typeof response
-                ? row.C(response)
-                : row.C(response[0], response[1]);
-              break;
-            case "L":
-              id = response[0];
-              tag = response[1];
-              3 === response.length
-                ? row.L(id, tag, response[2])
-                : row.L(id, tag);
-              break;
-            case "m":
-              "string" === typeof response
-                ? row.m(response)
-                : row.m(response[0], response[1]);
-              break;
-            case "X":
-              "string" === typeof response
-                ? row.X(response)
-                : row.X(response[0], response[1]);
-              break;
-            case "S":
-              "string" === typeof response
-                ? row.S(response)
-                : row.S(
-                    response[0],
-                    0 === response[1] ? void 0 : response[1],
-                    3 === response.length ? response[2] : void 0
-                  );
-              break;
-            case "M":
-              "string" === typeof response
-                ? row.M(response)
-                : row.M(response[0], response[1]);
-          }
+          resolveHint(response, row[0], row.slice(1));
           break;
         case 69:
-          tag = JSON.parse(row);
-          row = tag.digest;
-          tag = buildFakeCallStack(
-            response,
-            tag.stack,
-            Error.bind(
-              null,
-              tag.message ||
-                "An error occurred in the Server Components render but no message was provided"
-            )
-          );
-          buffer = response._debugRootTask;
-          tag = null != buffer ? buffer.run(tag) : tag();
-          tag.digest = row;
+          row = JSON.parse(row);
+          tag = resolveErrorDev(response, row);
+          tag.digest = row.digest;
           row = response._chunks;
-          (buffer = row.get(id))
-            ? triggerErrorOnChunk(buffer, tag)
-            : row.set(id, new Chunk("rejected", null, tag, response));
+          var chunk = row.get(id);
+          chunk
+            ? triggerErrorOnChunk(chunk, tag)
+            : row.set(id, createErrorChunk(response, tag));
           break;
         case 84:
-          tag = response._chunks;
-          (buffer = tag.get(id)) && "pending" !== buffer.status
-            ? buffer.reason.enqueueValue(row)
-            : tag.set(id, new Chunk("fulfilled", row, null, response));
+          resolveText(response, id, row);
+          break;
+        case 78:
+          response._timeOrigin = +row - performance.timeOrigin;
           break;
         case 68:
-          row = JSON.parse(row, response._fromJSON);
-          initializeFakeTask(response, row);
-          response = getChunk(response, id);
-          (response._debugInfo || (response._debugInfo = [])).push(row);
+          tag = new ReactPromise("resolved_model", row, null, response);
+          initializeModelChunk(tag);
+          "fulfilled" === tag.status
+            ? resolveDebugInfo(response, id, tag.value)
+            : tag.then(
+                function (v) {
+                  return resolveDebugInfo(response, id, v);
+                },
+                function () {}
+              );
           break;
         case 87:
-          a: {
-            chunk = JSON.parse(row, response._fromJSON);
-            row = chunk[0];
-            tag = chunk[1];
-            id = chunk[2];
-            buffer = chunk[3];
-            chunk = chunk.slice(4);
-            row = buildFakeCallStack(
-              response,
-              tag,
-              printToConsole.bind(null, row, chunk, buffer)
-            );
-            if (
-              null != id &&
-              ((id = initializeFakeTask(response, id)), null !== id)
-            ) {
-              id.run(row);
-              break a;
-            }
-            response = response._debugRootTask;
-            null != response ? response.run(row) : row();
-          }
+          resolveConsoleEntry(response, row);
           break;
         case 82:
           startReadableStream(response, id, void 0);
@@ -2001,26 +2682,14 @@
           startAsyncIterable(response, id, !0);
           break;
         case 67:
-          (response = response._chunks.get(id)) &&
-            "fulfilled" === response.status &&
-            response.reason.close("" === row ? '"$undefined"' : row);
+          stopStream(response, id, row);
           break;
         case 80:
-          row = JSON.parse(row);
-          tag = row.stack;
-          row = Error(row.reason || "");
-          row.$$typeof = REACT_POSTPONE_TYPE;
-          row.stack = tag;
-          tag = response._chunks;
-          (buffer = tag.get(id))
-            ? triggerErrorOnChunk(buffer, row)
-            : tag.set(id, new Chunk("rejected", null, row, response));
+          tag = JSON.parse(row);
+          resolvePostponeDev(response, id, tag.reason, tag.stack, tag.env);
           break;
         default:
-          (tag = response._chunks),
-            (buffer = tag.get(id))
-              ? resolveModelChunk(buffer, row)
-              : tag.set(id, new Chunk("resolved_model", row, null, response));
+          resolveModel(response, id, row);
       }
     }
     function createFromJSONCallback(response) {
@@ -2038,7 +2707,7 @@
               type: type,
               key: value[2],
               props: value[3],
-              _owner: key
+              _owner: null === key ? response._debugRootOwner : key
             };
             Object.defineProperty(value, "ref", {
               enumerable: !1,
@@ -2057,43 +2726,59 @@
               writable: !0,
               value: null
             });
+            validated = response._rootEnvironmentName;
+            null !== key && null != key.env && (validated = key.env);
+            var normalizedStackTrace = null;
+            null === key && null != response._debugRootStack
+              ? (normalizedStackTrace = response._debugRootStack)
+              : null !== stack &&
+                (normalizedStackTrace = createFakeJSXCallStackInDEV(
+                  response,
+                  stack,
+                  validated
+                ));
             Object.defineProperty(value, "_debugStack", {
               configurable: !1,
               enumerable: !1,
               writable: !0,
-              value: stack
+              value: normalizedStackTrace
             });
-            validated = null;
+            normalizedStackTrace = null;
             supportsCreateTask &&
               null !== stack &&
               ((type = console.createTask.bind(console, getTaskName(type))),
-              (stack = buildFakeCallStack(response, stack, type)),
-              (key = null === key ? null : initializeFakeTask(response, key)),
-              null === key
-                ? ((key = response._debugRootTask),
-                  (validated = null != key ? key.run(stack) : stack()))
-                : (validated = key.run(stack)));
+              (stack = buildFakeCallStack(response, stack, validated, type)),
+              (type =
+                null === key
+                  ? null
+                  : initializeFakeTask(response, key, validated)),
+              null === type
+                ? ((type = response._debugRootTask),
+                  (normalizedStackTrace =
+                    null != type ? type.run(stack) : stack()))
+                : (normalizedStackTrace = type.run(stack)));
             Object.defineProperty(value, "_debugTask", {
               configurable: !1,
               enumerable: !1,
               writable: !0,
-              value: validated
+              value: normalizedStackTrace
             });
+            null !== key && initializeFakeStack(response, key);
             null !== initializingHandler
               ? ((stack = initializingHandler),
                 (initializingHandler = stack.parent),
                 stack.errored
-                  ? ((key = new Chunk("rejected", null, stack.value, response)),
+                  ? ((key = createErrorChunk(response, stack.value)),
                     (stack = {
                       name: getComponentNameFromType(value.type) || "",
                       owner: value._owner
                     }),
-                    (stack.stack = value._debugStack),
-                    (stack.task = value._debugTask),
+                    (stack.debugStack = value._debugStack),
+                    supportsCreateTask && (stack.debugTask = value._debugTask),
                     (key._debugInfo = [stack]),
                     (value = createLazyChunkWrapper(key)))
                   : 0 < stack.deps &&
-                    ((key = new Chunk("blocked", null, null, response)),
+                    ((key = new ReactPromise("blocked", null, null, response)),
                     (stack.value = value),
                     (stack.chunk = key),
                     (value = Object.freeze.bind(Object, value.props)),
@@ -2115,12 +2800,10 @@
       ReactDOM = require("react-dom"),
       React = require("react"),
       decoderOptions = { stream: !0 },
+      bind$1 = Function.prototype.bind,
       chunkCache = new Map(),
       ReactDOMSharedInternals =
         ReactDOM.__DOM_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE,
-      ReactSharedInternals =
-        React.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE,
-      supportsCreateTask$1 = !!console.createTask,
       REACT_ELEMENT_TYPE = Symbol.for("react.transitional.element"),
       REACT_PORTAL_TYPE = Symbol.for("react.portal"),
       REACT_FRAGMENT_TYPE = Symbol.for("react.fragment"),
@@ -2135,6 +2818,7 @@
       REACT_MEMO_TYPE = Symbol.for("react.memo"),
       REACT_LAZY_TYPE = Symbol.for("react.lazy"),
       REACT_POSTPONE_TYPE = Symbol.for("react.postpone"),
+      REACT_VIEW_TRANSITION_TYPE = Symbol.for("react.view_transition"),
       MAYBE_ITERATOR_SYMBOL = Symbol.iterator,
       ASYNC_ITERATOR = Symbol.asyncIterator,
       isArrayImpl = Array.isArray,
@@ -2145,11 +2829,50 @@
       ObjectPrototype = Object.prototype,
       knownServerReferences = new WeakMap(),
       boundCache = new WeakMap(),
+      fakeServerFunctionIdx = 0,
       FunctionBind = Function.prototype.bind,
       ArraySlice = Array.prototype.slice,
-      REACT_CLIENT_REFERENCE = Symbol.for("react.client.reference");
-    Chunk.prototype = Object.create(Promise.prototype);
-    Chunk.prototype.then = function (resolve, reject) {
+      v8FrameRegExp =
+        /^ {3} at (?:(.+) \((.+):(\d+):(\d+)\)|(?:async )?(.+):(\d+):(\d+))$/,
+      jscSpiderMonkeyFrameRegExp = /(?:(.*)@)?(.*):(\d+):(\d+)/,
+      supportsUserTiming =
+        "undefined" !== typeof performance &&
+        "function" === typeof performance.measure,
+      componentsTrackMarker = {
+        startTime: 0.001,
+        detail: {
+          devtools: {
+            color: "primary-light",
+            track: "Primary",
+            trackGroup: "Server Components \u269b"
+          }
+        }
+      },
+      reusableComponentDevToolDetails = {
+        color: "primary",
+        track: "",
+        trackGroup: "Server Components \u269b"
+      },
+      reusableComponentOptions = {
+        start: -0,
+        end: -0,
+        detail: { devtools: reusableComponentDevToolDetails }
+      },
+      trackNames =
+        "Primary Parallel Parallel\u200b Parallel\u200b\u200b Parallel\u200b\u200b\u200b Parallel\u200b\u200b\u200b\u200b Parallel\u200b\u200b\u200b\u200b\u200b Parallel\u200b\u200b\u200b\u200b\u200b\u200b Parallel\u200b\u200b\u200b\u200b\u200b\u200b\u200b Parallel\u200b\u200b\u200b\u200b\u200b\u200b\u200b\u200b".split(
+          " "
+        ),
+      REACT_CLIENT_REFERENCE = Symbol.for("react.client.reference"),
+      prefix,
+      suffix;
+    new ("function" === typeof WeakMap ? WeakMap : Map)();
+    var ReactSharedInteralsServer =
+        React.__SERVER_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE,
+      ReactSharedInternals =
+        React.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE ||
+        ReactSharedInteralsServer;
+    ReactPromise.prototype = Object.create(Promise.prototype);
+    ReactPromise.prototype.then = function (resolve, reject) {
       switch (this.status) {
         case "resolved_model":
           initializeModelChunk(this);
@@ -2175,20 +2898,121 @@
       }
     };
     var initializingHandler = null,
+      initializingChunk = null,
       supportsCreateTask = !!console.createTask,
       fakeFunctionCache = new Map(),
       fakeFunctionIdx = 0,
-      frameRegExp =
-        /^ {3} at (?:(.+) \(([^\)]+):(\d+):(\d+)\)|(?:async )?([^\)]+):(\d+):(\d+))$/;
-    exports.createFromNodeStream = function (stream, ssrManifest, options) {
+      createFakeJSXCallStack = {
+        "react-stack-bottom-frame": function (
+          response,
+          stack,
+          environmentName
+        ) {
+          return buildFakeCallStack(
+            response,
+            stack,
+            environmentName,
+            fakeJSXCallSite
+          )();
+        }
+      },
+      createFakeJSXCallStackInDEV = createFakeJSXCallStack[
+        "react-stack-bottom-frame"
+      ].bind(createFakeJSXCallStack),
+      currentOwnerInDEV = null,
+      replayConsoleWithCallStack = {
+        "react-stack-bottom-frame": function (
+          response,
+          methodName,
+          stackTrace,
+          owner,
+          env,
+          args
+        ) {
+          var prevStack = ReactSharedInternals.getCurrentStack;
+          ReactSharedInternals.getCurrentStack = getCurrentStackInDEV;
+          currentOwnerInDEV = null === owner ? response._debugRootOwner : owner;
+          try {
+            a: {
+              var offset = 0;
+              switch (methodName) {
+                case "dir":
+                case "dirxml":
+                case "groupEnd":
+                case "table":
+                  var JSCompiler_inline_result = bind$1.apply(
+                    console[methodName],
+                    [console].concat(args)
+                  );
+                  break a;
+                case "assert":
+                  offset = 1;
+              }
+              var newArgs = args.slice(0);
+              "string" === typeof newArgs[offset]
+                ? newArgs.splice(
+                    offset,
+                    1,
+                    "\u001b[0m\u001b[7m%c%s\u001b[0m%c " + newArgs[offset],
+                    "background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px",
+                    " " + env + " ",
+                    ""
+                  )
+                : newArgs.splice(
+                    offset,
+                    0,
+                    "\u001b[0m\u001b[7m%c%s\u001b[0m%c ",
+                    "background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px",
+                    " " + env + " ",
+                    ""
+                  );
+              newArgs.unshift(console);
+              JSCompiler_inline_result = bind$1.apply(
+                console[methodName],
+                newArgs
+              );
+            }
+            var callStack = buildFakeCallStack(
+              response,
+              stackTrace,
+              env,
+              JSCompiler_inline_result
+            );
+            if (null != owner) {
+              var task = initializeFakeTask(response, owner, env);
+              initializeFakeStack(response, owner);
+              if (null !== task) {
+                task.run(callStack);
+                return;
+              }
+            }
+            var rootTask = getRootTask(response, env);
+            null != rootTask ? rootTask.run(callStack) : callStack();
+          } finally {
+            (currentOwnerInDEV = null),
+              (ReactSharedInternals.getCurrentStack = prevStack);
+          }
+        }
+      },
+      replayConsoleWithCallStackInDEV = replayConsoleWithCallStack[
+        "react-stack-bottom-frame"
+      ].bind(replayConsoleWithCallStack);
+    exports.createFromNodeStream = function (
+      stream,
+      serverConsumerManifest,
+      options
+    ) {
       var response = new ResponseInstance(
-        ssrManifest.moduleMap,
-        ssrManifest.moduleLoading,
+        serverConsumerManifest.moduleMap,
+        serverConsumerManifest.serverModuleMap,
+        serverConsumerManifest.moduleLoading,
         noServerCall,
         options ? options.encodeFormAction : void 0,
         options && "string" === typeof options.nonce ? options.nonce : void 0,
         void 0,
-        options && options.findSourceMapURL ? options.findSourceMapURL : void 0
+        options && options.findSourceMapURL ? options.findSourceMapURL : void 0,
+        options ? !0 === options.replayConsoleLogs : !1,
+        options && options.environmentName ? options.environmentName : void 0
       );
       stream.on("data", function (chunk) {
         for (
@@ -2230,10 +3054,11 @@
               86 === rowState
                 ? ((rowTag = rowState), (rowState = 2), i++)
                 : (64 < rowState && 91 > rowState) ||
-                  114 === rowState ||
-                  120 === rowState
-                ? ((rowTag = rowState), (rowState = 3), i++)
-                : ((rowTag = 0), (rowState = 3));
+                    35 === rowState ||
+                    114 === rowState ||
+                    120 === rowState
+                  ? ((rowTag = rowState), (rowState = 3), i++)
+                  : ((rowTag = 0), (rowState = 3));
               continue;
             case 2:
               lastIdx = chunk[i++];
@@ -2253,7 +3078,7 @@
           var offset = chunk.byteOffset + i;
           if (-1 < lastIdx)
             (rowLength = new Uint8Array(chunk.buffer, offset, lastIdx - i)),
-              processFullRow(response, rowID, rowTag, buffer, rowLength),
+              processFullBinaryRow(response, rowID, rowTag, buffer, rowLength),
               (i = lastIdx),
               3 === rowState && i++,
               (rowLength = rowID = rowTag = rowState = 0),
